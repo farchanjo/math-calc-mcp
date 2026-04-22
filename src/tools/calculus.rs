@@ -1,4 +1,3 @@
-
 //! built on top of [`crate::engine::expression`].
 //!
 //! Algorithms:
@@ -14,9 +13,7 @@
 use std::collections::HashMap;
 
 use crate::engine::expression::{ExpressionError, evaluate_with_variables};
-use crate::mcp::message::{
-    ErrorCode, Response, error_with_detail, expression_error_envelope,
-};
+use crate::mcp::message::{ErrorCode, Response, error_with_detail, expression_error_envelope};
 
 const TOOL_DERIVATIVE: &str = "DERIVATIVE";
 const TOOL_NTH_DERIVATIVE: &str = "NTH_DERIVATIVE";
@@ -28,7 +25,7 @@ const SIMPSON_INTERVALS: i32 = 10_000;
 const MAX_ORDER: i32 = 10;
 
 /// Format an f64 using Rust's debug representation (closest available match to
-`String.valueOf(double)` — emits `1.0` for whole doubles).
+/// `String.valueOf(double)` — emits `1.0` for whole doubles).
 fn format_f64(value: f64) -> String {
     format!("{value:?}")
 }
@@ -199,7 +196,7 @@ pub fn nth_derivative(expression: &str, variable: &str, point: f64, order: i32) 
 }
 
 /// Definite integral over `[lower, upper]` by composite Simpson's rule.
-#[must_use] 
+#[must_use]
 pub fn definite_integral(expression: &str, variable: &str, lower: f64, upper: f64) -> String {
     let tool = TOOL_DEFINITE_INTEGRAL;
     match simpson(expression, variable, lower, upper) {
@@ -385,7 +382,10 @@ mod tests {
     fn integral_of_x_squared_0_to_1() {
         let out = definite_integral("x^2", "x", 0.0, 1.0);
         assert!(out.starts_with("DEFINITE_INTEGRAL: OK | RESULT: "));
-        assert!((extract_result(&out) - (1.0 / 3.0)).abs() < 1e-6, "got {out}");
+        assert!(
+            (extract_result(&out) - (1.0 / 3.0)).abs() < 1e-6,
+            "got {out}"
+        );
     }
 
     #[test]
@@ -430,15 +430,9 @@ mod tests {
     fn tangent_line_of_x_squared_at_3() {
         let out = tangent_line("x^2", "x", 3.0);
         // Central-difference slope ≈ 6.000000001282757, intercept ≈ -9.000000003848271.
-        assert!(
-            out.starts_with("TANGENT_LINE: OK | SLOPE: "),
-            "got {out}"
-        );
+        assert!(out.starts_with("TANGENT_LINE: OK | SLOPE: "), "got {out}");
         assert!(out.contains(" | INTERCEPT: "), "got {out}");
-        assert!(
-            out.contains(" | EQUATION: y = "),
-            "got {out}"
-        );
+        assert!(out.contains(" | EQUATION: y = "), "got {out}");
     }
 
     #[test]

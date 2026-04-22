@@ -104,7 +104,11 @@ fn integer_degrees(degrees: f64) -> Option<i32> {
 fn normalized_degrees(degrees: f64) -> Option<i32> {
     integer_degrees(degrees).map(|d| {
         let angle = d % FULL_CIRCLE;
-        if angle < 0 { angle + FULL_CIRCLE } else { angle }
+        if angle < 0 {
+            angle + FULL_CIRCLE
+        } else {
+            angle
+        }
     })
 }
 
@@ -113,7 +117,7 @@ fn exact_lookup(table: &HashMap<i32, f64>, degrees: f64) -> Option<f64> {
 }
 
 /// Compute square root of a number.
-#[must_use] 
+#[must_use]
 pub fn sqrt(number: f64) -> String {
     if number < 0.0 {
         return error_with_detail(
@@ -129,7 +133,7 @@ pub fn sqrt(number: f64) -> String {
 }
 
 /// Compute natural logarithm (ln) of a number.
-#[must_use] 
+#[must_use]
 pub fn log(number: f64) -> String {
     if number <= 0.0 {
         return error_with_detail(
@@ -145,7 +149,7 @@ pub fn log(number: f64) -> String {
 }
 
 /// Compute base-10 logarithm of a number.
-#[must_use] 
+#[must_use]
 pub fn log10(number: f64) -> String {
     if number <= 0.0 {
         return error_with_detail(
@@ -184,18 +188,20 @@ pub fn factorial(num: i64) -> String {
         // path rather than a raw cast.
         value *= u64::try_from(idx).expect("0..=20 fits in u64");
     }
-    Response::ok(TOOL_FACTORIAL).result(value.to_string()).build()
+    Response::ok(TOOL_FACTORIAL)
+        .result(value.to_string())
+        .build()
 }
 
 /// Compute sine of an angle in degrees.
-#[must_use] 
+#[must_use]
 pub fn sin(degrees: f64) -> String {
     let value = exact_lookup(&SIN_TABLE, degrees).unwrap_or_else(|| degrees.to_radians().sin());
     Response::ok(TOOL_SIN).result(format!("{value:?}")).build()
 }
 
 /// Compute cosine of an angle in degrees.
-#[must_use] 
+#[must_use]
 pub fn cos(degrees: f64) -> String {
     let value = exact_lookup(&COS_TABLE, degrees).unwrap_or_else(|| degrees.to_radians().cos());
     Response::ok(TOOL_COS).result(format!("{value:?}")).build()
@@ -206,7 +212,11 @@ pub fn tan(degrees: f64) -> String {
     if let Some(as_int) = integer_degrees(degrees) {
         let normalized = {
             let angle = as_int % FULL_CIRCLE;
-            if angle < 0 { angle + FULL_CIRCLE } else { angle }
+            if angle < 0 {
+                angle + FULL_CIRCLE
+            } else {
+                angle
+            }
         };
         if normalized == 90 || normalized == 270 {
             return error_with_detail(
@@ -311,10 +321,7 @@ mod tests {
 
     #[test]
     fn factorial_twenty() {
-        assert_eq!(
-            factorial(20),
-            "FACTORIAL: OK | RESULT: 2432902008176640000"
-        );
+        assert_eq!(factorial(20), "FACTORIAL: OK | RESULT: 2432902008176640000");
     }
 
     #[test]
@@ -445,5 +452,4 @@ mod tests {
             "TAN: ERROR\nREASON: [DOMAIN_ERROR] tangent is undefined at 90 and 270 degrees (vertical asymptote)\nDETAIL: degrees=-270"
         );
     }
-
 }

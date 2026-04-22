@@ -63,6 +63,17 @@ jiff = { version = "0.2", features = ["serde"] }
 # Portable SIMD (auto-dispatches SSE2/AVX2/AVX-512/NEON)
 wide = "0.7"
 
+# Cryptographic hashes (pure-Rust RustCrypto suite)
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
+
+# Encoding utilities (all pure Rust, no C deps)
+base64 = "0.22"
+urlencoding = "2"
+crc32fast = "1"
+hex = "0.4"
+
 # Logging to stderr (stdio transport requires stdout clean)
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

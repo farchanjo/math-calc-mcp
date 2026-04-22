@@ -11,7 +11,7 @@
 [![Binary size](https://img.shields.io/badge/binary-~3%20MB-lightgrey.svg)](#build-profiles)
 [![Tools](https://img.shields.io/badge/tools-87-success.svg)](./docs/TOOLS.md)
 
-A pure-Rust [**Model Context Protocol**](https://modelcontextprotocol.io) server that exposes **87 expert-grade calculator tools** to any LLM. Arbitrary-precision math, correctly-rounded transcendentals, finance, calculus, networking, electronics, unit conversion, and date/time — all behind a single static ~3 MB stdio binary.
+A pure-Rust [**Model Context Protocol**](https://modelcontextprotocol.io) server that exposes **173 expert-grade calculator tools** to any LLM. Arbitrary-precision math, correctly-rounded transcendentals, finance, calculus, statistics, combinatorics, geometry, complex numbers, matrices, physics, chemistry, crypto/encoding, networking, electronics, unit conversion, and date/time — all behind a single static stdio binary.
 
 [Quick start](#quick-start) · [Integration](#integration) · [Tool catalog](#tool-catalog) · [Examples](#examples) · [Architecture](#architecture) · [Docs](#documentation)
 
@@ -42,7 +42,7 @@ A pure-Rust [**Model Context Protocol**](https://modelcontextprotocol.io) server
 ```mermaid
 graph LR
     LLM["LLM<br/>Claude / GPT / ..."]
-    A["arithma<br/>87 tools · stdio"]
+    A["arithma<br/>173 tools · stdio"]
     R["Precise<br/>results"]
     LLM -- JSON-RPC --> A --> R
     style A fill:#8b5cf6,color:#fff,stroke:#fff,stroke-width:2px
@@ -54,7 +54,7 @@ graph LR
 - **Zero C deps** — pure Rust, single static binary for Linux, macOS, and Windows.
 - **Portable SIMD** — runtime dispatch across SSE2 / AVX2 / AVX-512 / NEON via `wide`.
 - **IANA timezones** — embedded via `jiff`, no `libicu`.
-- **Tested** — 349 unit tests + 87 stdio integration tests, full suite in under a second.
+- **Tested** — 690 unit tests + 234 stdio integration tests across 23 categories, full suite in under a second.
 - **Stateless** — every call is independent; safe to fan out concurrently.
 
 > [!NOTE]
@@ -129,7 +129,7 @@ All of these speak the same stdio MCP protocol. Point their config at the `arith
  sleep 0.3) | ./target/release/arithma 2>/dev/null | head -c 500
 ```
 
-The response must contain `tools/list` with all 87 tools.
+The response must contain `tools/list` with all 173 tools.
 
 </details>
 
@@ -137,13 +137,13 @@ The response must contain `tools/list` with all 87 tools.
 
 ## Tool catalog
 
-**87 tools · 15 categories.** Full reference with inputs, outputs, and examples lives in [`docs/TOOLS.md`](./docs/TOOLS.md).
+**173 tools · 23 categories.** Full reference with inputs, outputs, and examples lives in [`docs/TOOLS.md`](./docs/TOOLS.md).
 
 | # | Category | Tools | Highlights |
 |:-:|:---|:-:|:---|
 | 1 | Basic math | 7 | `add`, `subtract`, `multiply`, `divide`, `power`, `modulo`, `abs` |
 | 2 | Scientific | 7 | `sqrt`, `log`, `log10`, `factorial`, `sin`, `cos`, `tan` |
-| 3 | Expression engine | 4 | `evaluate`, `evaluateExact`, plus variable-substitution variants |
+| 3 | Expression engine | 4 | `evaluate`, `evaluateExact` + variable variants — `pi`, `e`, `tau`, `phi` constants and 30+ functions (trig, hyperbolic, exp, log, `gcd`, `hypot`, `factorial`, …) |
 | 4 | Vectors & arrays | 4 | `sumArray`, `dotProduct`, `scaleArray`, `magnitudeArray` |
 | 5 | Finance | 6 | `compoundInterest`, `loanPayment`, `presentValue`, `futureValueAnnuity`, `returnOnInvestment`, `amortizationSchedule` |
 | 6 | Calculus | 4 | `derivative`, `nthDerivative`, `definiteIntegral`, `tangentLine` |
@@ -156,6 +156,14 @@ The response must contain `tools/list` with all 87 tools.
 | 13 | Networking | 13 | Subnetting, VLSM, IPv4/IPv6, throughput, TCP window |
 | 14 | Analog electronics | 14 | Ohm's law, filters, impedance, resonance, 555 timers |
 | 15 | Digital electronics | 10 | Bases, two's complement, Gray code, ADC/DAC, Nyquist |
+| 16 | Statistics | 16 | `mean`, `median`, `mode`, `stdDev`, `percentile`, `correlation`, `linearRegression`, `normalPdf/Cdf`, `tTestOneSample`, `binomialPmf`, `confidenceInterval` |
+| 17 | Combinatorics & number theory | 7 | `combination`, `permutation`, `fibonacci`, `isPrime`, `nextPrime`, `primeFactors`, `eulerTotient` (exact arbitrary precision) |
+| 18 | Geometry | 12 | Circle/sphere/cone/cylinder, Heron triangle, Shoelace polygon, regular polygon, 2D/3D distances |
+| 19 | Complex numbers | 10 | Add/mult/div/power/sqrt, magnitude, phase, polar⇄rect (degrees) |
+| 20 | Crypto & encoding | 10 | MD5, SHA-1/256/512, Base64, URL, hex, CRC-32 |
+| 21 | Matrices | 10 | Add, multiply, transpose, determinant, inverse, trace, rank, 2x2 eigenvalues, cross product, Gaussian elimination |
+| 22 | Physics | 12 | Kinematics, projectile motion, Newton's law, gravity, Doppler, wavelength, Planck, ideal gas, heat transfer, Stefan-Boltzmann, escape & orbital velocity |
+| 23 | Chemistry | 9 | Molar mass (nested formulas), pH/pOH, molarity, molality, Henderson-Hasselbalch, half-life, decay constant, ideal-gas moles |
 
 ---
 
@@ -224,8 +232,8 @@ Full wire-level walkthrough: [`docs/API.md`](./docs/API.md).
 graph TB
     Client["MCP client<br/>(Claude / Cursor / ...)"]
     Main["main.rs<br/>Tokio + stdio"]
-    Server["server.rs<br/>#[tool_router] — 87 tools"]
-    Tools["tools/*<br/>15 category modules"]
+    Server["server.rs<br/>#[tool_router] — 173 tools"]
+    Tools["tools/*<br/>23 category modules"]
     Engine["engine/*<br/>expression · units · BigDecimal"]
 
     Client -- JSON-RPC --> Main --> Server --> Tools --> Engine
@@ -274,8 +282,8 @@ Deep dive: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
 ```bash
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --lib                 # 349 unit tests
-python3 scripts/test_stdio.py    # 87 stdio integration tests
+cargo test --lib                 # 690 unit tests
+python3 scripts/test_stdio.py    # 234 stdio integration tests
 ```
 
 All four must pass before committing. See [`docs/DEVELOPMENT.md`](./docs/DEVELOPMENT.md) for layout, conventions, and the contribution workflow.
@@ -289,10 +297,10 @@ arithma/
 ├── src/
 │   ├── main.rs                  Binary entry, stdio MCP transport
 │   ├── lib.rs                   Library exports
-│   ├── server.rs                #[tool_router] — all 87 tools
+│   ├── server.rs                #[tool_router] — all 173 tools
 │   ├── engine/                  Expression parser, unit registry, BigDecimal helpers
 │   ├── mcp/                     MCP message helpers
-│   └── tools/                   15 category modules
+│   └── tools/                   23 category modules
 ├── scripts/test_stdio.py        Full stdio integration test
 └── docs/                        INDEX · ARCHITECTURE · TOOLS · DEVELOPMENT · API
 ```
@@ -318,7 +326,7 @@ Issues and PRs welcome. Keep the workflow green:
 - [x] `cargo fmt` — formatted.
 - [x] `cargo clippy --all-targets -- -D warnings` — zero warnings.
 - [x] `cargo test --lib` — all unit tests pass.
-- [x] `python3 scripts/test_stdio.py` — all 87 stdio tests pass.
+- [x] `python3 scripts/test_stdio.py` — all 234 stdio tests pass.
 - [x] en-US only in code, commits, and docs.
 
 Use the [Angular commit format](https://github.com/angular/angular/blob/main/CONTRIBUTING.md#commit): `<type>(<scope>): <subject>`.

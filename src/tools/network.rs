@@ -411,14 +411,17 @@ fn to_binary16(group: u32) -> String {
 
 fn validate_cidr_for(tool: &str, cidr: i32, ipv6: bool) -> Result<u32, String> {
     let max: i32 = if ipv6 { 128 } else { 32 };
-    u32::try_from(cidr).ok().filter(|v| *v <= max.unsigned_abs()).ok_or_else(|| {
-        error_with_detail(
-            tool,
-            ErrorCode::OutOfRange,
-            &format!("CIDR must be between 0 and {max}"),
-            &format!("cidr={cidr}"),
-        )
-    })
+    u32::try_from(cidr)
+        .ok()
+        .filter(|v| *v <= max.unsigned_abs())
+        .ok_or_else(|| {
+            error_with_detail(
+                tool,
+                ErrorCode::OutOfRange,
+                &format!("CIDR must be between 0 and {max}"),
+                &format!("cidr={cidr}"),
+            )
+        })
 }
 
 // ------------------------------------------------------------------ //
@@ -880,7 +883,11 @@ fn compute_summary(subnets_json: &str) -> String {
     // Longest-common-prefix algorithm: count the matching high-order bits of
     // min_network and max_broadcast. That prefix length IS the supernet CIDR.
     let diff: u32 = min_network ^ max_broadcast;
-    let super_cidr: u32 = if diff == 0 { IPV4_BITS } else { diff.leading_zeros() };
+    let super_cidr: u32 = if diff == 0 {
+        IPV4_BITS
+    } else {
+        diff.leading_zeros()
+    };
     let super_mask = cidr_to_mask_v4_u32(super_cidr);
     let super_network = min_network & super_mask;
     let summary = format!(
@@ -958,8 +965,18 @@ fn parse_transfer_inputs(
 ) -> Result<TransferInputs, String> {
     let size_unit = file_size_unit.to_ascii_lowercase();
     let bw_unit = bandwidth_unit.to_ascii_lowercase();
-    require_category_for(TRANSFER_TIME, &size_unit, UnitCategory::DataStorage, "fileSizeUnit")?;
-    require_category_for(TRANSFER_TIME, &bw_unit, UnitCategory::DataRate, "bandwidthUnit")?;
+    require_category_for(
+        TRANSFER_TIME,
+        &size_unit,
+        UnitCategory::DataStorage,
+        "fileSizeUnit",
+    )?;
+    require_category_for(
+        TRANSFER_TIME,
+        &bw_unit,
+        UnitCategory::DataRate,
+        "bandwidthUnit",
+    )?;
     let size_value = parse_decimal_for(TRANSFER_TIME, file_size, "fileSize")?;
     let bandwidth_value = parse_decimal_for(TRANSFER_TIME, bandwidth, "bandwidth")?;
     if size_value.is_negative() {
@@ -996,12 +1013,18 @@ fn compute_transfer_time(
         Ok(v) => v,
         Err(e) => return e,
     };
-    let size_bytes = match unit_convert_for(TRANSFER_TIME, &inputs.size_value, &inputs.size_unit, "byte") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
+    let size_bytes =
+        match unit_convert_for(TRANSFER_TIME, &inputs.size_value, &inputs.size_unit, "byte") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
     let size_bits = mul_ctx(&size_bytes, &BigDecimal::from(BITS_PER_BYTE));
-    let bps = match unit_convert_for(TRANSFER_TIME, &inputs.bandwidth_value, &inputs.bw_unit, "bps") {
+    let bps = match unit_convert_for(
+        TRANSFER_TIME,
+        &inputs.bandwidth_value,
+        &inputs.bw_unit,
+        "bps",
+    ) {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -1040,7 +1063,12 @@ fn parse_throughput_inputs(
     let size_unit = data_size_unit.to_ascii_lowercase();
     let tu = time_unit.to_ascii_lowercase();
     let out_unit = output_unit.to_ascii_lowercase();
-    require_category_for(THROUGHPUT, &size_unit, UnitCategory::DataStorage, "dataSizeUnit")?;
+    require_category_for(
+        THROUGHPUT,
+        &size_unit,
+        UnitCategory::DataStorage,
+        "dataSizeUnit",
+    )?;
     require_category_for(THROUGHPUT, &tu, UnitCategory::Time, "timeUnit")?;
     require_category_for(THROUGHPUT, &out_unit, UnitCategory::DataRate, "outputUnit")?;
     let size_value = parse_decimal_for(THROUGHPUT, data_size, "dataSize")?;
@@ -1077,14 +1105,16 @@ fn compute_throughput(
     time_unit: &str,
     output_unit: &str,
 ) -> String {
-    let inputs = match parse_throughput_inputs(data_size, data_size_unit, time, time_unit, output_unit) {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let size_bytes = match unit_convert_for(THROUGHPUT, &inputs.size_value, &inputs.size_unit, "byte") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
+    let inputs =
+        match parse_throughput_inputs(data_size, data_size_unit, time, time_unit, output_unit) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+    let size_bytes =
+        match unit_convert_for(THROUGHPUT, &inputs.size_value, &inputs.size_unit, "byte") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
     let size_bits = mul_ctx(&size_bytes, &BigDecimal::from(BITS_PER_BYTE));
     let seconds = match unit_convert_for(THROUGHPUT, &inputs.time_value, &inputs.tu, "s") {
         Ok(v) => v,
@@ -1102,14 +1132,12 @@ fn compute_throughput(
         Ok(v) => v,
         Err(e) => return e,
     };
-    Response::ok(THROUGHPUT).field("RATE", strip(&result)).build()
+    Response::ok(THROUGHPUT)
+        .field("RATE", strip(&result))
+        .build()
 }
 
-fn compute_tcp_throughput(
-    bandwidth_mbps: &str,
-    rtt_ms: &str,
-    window_size_kb: &str,
-) -> String {
+fn compute_tcp_throughput(bandwidth_mbps: &str, rtt_ms: &str, window_size_kb: &str) -> String {
     let million = BigDecimal::from(1_000_000);
     let thousand = BigDecimal::from(1_000);
     let kilo_bits = BigDecimal::from(8192);
@@ -1399,9 +1427,7 @@ mod tests {
         // silently returned `10.0.0.0/32`. The correct supernet covering all
         // three RFC-1918 blocks is the entire IPv4 space (`0.0.0.0/0`).
         assert_eq!(
-            summarize_subnets(
-                "[\"10.0.0.0/8\",\"172.16.0.0/12\",\"192.168.0.0/16\"]",
-            ),
+            summarize_subnets("[\"10.0.0.0/8\",\"172.16.0.0/12\",\"192.168.0.0/16\"]",),
             "SUMMARIZE_SUBNETS: OK | RESULT: 0.0.0.0/0"
         );
     }

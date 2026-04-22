@@ -89,11 +89,7 @@ impl<'a> Response<'a> {
 
     /// Append a `KEY: value` field. Keys should be `SCREAMING_SNAKE_CASE`.
     #[must_use]
-    pub fn field(
-        mut self,
-        key: impl Into<Cow<'a, str>>,
-        value: impl Into<Cow<'a, str>>,
-    ) -> Self {
+    pub fn field(mut self, key: impl Into<Cow<'a, str>>, value: impl Into<Cow<'a, str>>) -> Self {
         self.fields.push((key.into(), value.into()));
         self
     }
@@ -160,7 +156,10 @@ mod tests {
 
     #[test]
     fn ok_single_result_inline() {
-        assert_eq!(Response::ok("ADD").result("4").build(), "ADD: OK | RESULT: 4");
+        assert_eq!(
+            Response::ok("ADD").result("4").build(),
+            "ADD: OK | RESULT: 4"
+        );
     }
 
     #[test]
@@ -203,7 +202,9 @@ mod tests {
 
     #[test]
     fn custom_status() {
-        let out = Response::status("SOLVE", "NO_ROOT").field("REASON", "diverged").build();
+        let out = Response::status("SOLVE", "NO_ROOT")
+            .field("REASON", "diverged")
+            .build();
         assert_eq!(out, "SOLVE: NO_ROOT | REASON: diverged");
     }
 
@@ -211,7 +212,11 @@ mod tests {
     fn error_codes_format_stable() {
         assert_eq!(ErrorCode::DomainError.as_str(), "DOMAIN_ERROR");
         assert_eq!(ErrorCode::DivisionByZero.as_str(), "DIVISION_BY_ZERO");
-        let out = error("SQRT", ErrorCode::DomainError, "square root is undefined for negatives");
+        let out = error(
+            "SQRT",
+            ErrorCode::DomainError,
+            "square root is undefined for negatives",
+        );
         assert_eq!(
             out,
             "SQRT: ERROR\nREASON: [DOMAIN_ERROR] square root is undefined for negatives"

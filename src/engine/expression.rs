@@ -21,8 +21,11 @@
 //! * Unary minus is a prefix operator — number literals never carry a sign.
 
 use std::collections::HashMap;
-use std::f64::consts::PI;
+use std::f64::consts::{E, PI, TAU};
 use std::hash::BuildHasher;
+
+/// Golden ratio (φ = (1 + √5) / 2).
+const PHI: f64 = 1.618_033_988_749_895_f64;
 
 /// Public error type returned when parsing or evaluation fails.
 ///
@@ -237,6 +240,11 @@ impl<'a, S: BuildHasher> Parser<'a, S> {
         if self.current_char() == Some('^') {
             self.pos += 1;
             let exponent = self.parse_power()?;
+            // 0^(-n) is 1/0 — classify as division by zero rather than the
+            // generic overflow that would otherwise come out of powf → +inf.
+            if base == 0.0 && exponent < 0.0 {
+                return Err(ExpressionError::DivisionByZero);
+            }
             Self::check_finite(base.powf(exponent), "^")
         } else {
             Ok(base)
@@ -306,7 +314,7 @@ impl<'a, S: BuildHasher> Parser<'a, S> {
         }
     }
 
-    // ---- identifier parsing (function call or variable) ---- //
+    // ---- identifier parsing (function call, variable, or constant) ---- //
     fn parse_identifier(&mut self) -> Result<f64, ExpressionError> {
         let start = self.pos;
         while let Some(ch) = self.current_char() {
@@ -322,16 +330,44 @@ impl<'a, S: BuildHasher> Parser<'a, S> {
         if self.current_char() == Some('(') {
             self.pos += 1;
             self.paren_depth += 1;
-            let argument = self.parse_expression()?;
-            self.expect_close_paren()?;
+            let args = self.parse_call_arguments()?;
             self.paren_depth -= 1;
-            call_function(&name, argument)
+            call_function(&name, &args)
         } else if let Some(value) = self.variables.get(&name) {
             Ok(*value)
+        } else if let Some(value) = lookup_constant(&name) {
+            Ok(value)
         } else if self.paren_depth > 0 && self.current_char().is_none() {
             Err(ExpressionError::ExpectedCloseParen { pos: self.pos })
         } else {
             Err(ExpressionError::UnknownVariable(name))
+        }
+    }
+
+    /// Parse `expr (',' expr)* ')'` — leaves the parser positioned past the
+    /// closing paren. An empty argument list (`f()`) is permitted.
+    fn parse_call_arguments(&mut self) -> Result<Vec<f64>, ExpressionError> {
+        self.skip_whitespace();
+        if self.current_char() == Some(')') {
+            self.pos += 1;
+            return Ok(Vec::new());
+        }
+        let mut args = vec![self.parse_expression()?];
+        loop {
+            self.skip_whitespace();
+            match self.current_char() {
+                Some(',') => {
+                    self.pos += 1;
+                    args.push(self.parse_expression()?);
+                }
+                Some(')') => {
+                    self.pos += 1;
+                    return Ok(args);
+                }
+                Some(_) | None => {
+                    return Err(ExpressionError::ExpectedCloseParen { pos: self.pos });
+                }
+            }
         }
     }
 
@@ -350,44 +386,349 @@ impl<'a, S: BuildHasher> Parser<'a, S> {
 // pattern. Using `.to_radians()` changes the rounding of boundary angles
 // (e.g. `sin(180)` moves off 0), which the graphing/calculus tests pin.
 const DEG_TO_RAD: f64 = PI / 180.0;
+const RAD_TO_DEG: f64 = 180.0 / PI;
 
-fn call_function(name: &str, arg: f64) -> Result<f64, ExpressionError> {
-    let domain_err = |op: &str| ExpressionError::DomainError {
-        op: op.to_string(),
-        value: format_arg(arg),
-    };
+/// Resolve a bare identifier as a built-in constant (pi, e, tau, phi).
+/// Case-sensitive; only lowercase forms are recognized to leave variable
+/// namespace fully available to callers.
+#[must_use]
+pub fn lookup_constant(name: &str) -> Option<f64> {
     match name {
-        "sin" => Ok((arg * DEG_TO_RAD).sin()),
-        "cos" => Ok((arg * DEG_TO_RAD).cos()),
-        "tan" => {
-            let value = (arg * DEG_TO_RAD).tan();
-            if !value.is_finite() {
-                return Err(domain_err("tan"));
-            }
-            Ok(value)
+        "pi" => Some(PI),
+        "e" => Some(E),
+        "tau" => Some(TAU),
+        "phi" => Some(PHI),
+        _ => None,
+    }
+}
+
+fn check_arity(args: &[f64], expected: usize, op: &str) -> Result<(), ExpressionError> {
+    if args.len() == expected {
+        Ok(())
+    } else {
+        Err(ExpressionError::DomainError {
+            op: op.to_string(),
+            value: format!("arity={}, expected={expected}", args.len()),
+        })
+    }
+}
+
+fn domain_err(op: &str, value: f64) -> ExpressionError {
+    ExpressionError::DomainError {
+        op: op.to_string(),
+        value: format_arg(value),
+    }
+}
+
+fn call_trig(name: &str, args: &[f64]) -> Result<f64, ExpressionError> {
+    match name {
+        "sin" => {
+            check_arity(args, 1, "sin")?;
+            Ok((args[0] * DEG_TO_RAD).sin())
         }
-        "log" => {
-            if arg <= 0.0 {
-                return Err(domain_err("log"));
+        "cos" => {
+            check_arity(args, 1, "cos")?;
+            Ok((args[0] * DEG_TO_RAD).cos())
+        }
+        "tan" => {
+            check_arity(args, 1, "tan")?;
+            let value = (args[0] * DEG_TO_RAD).tan();
+            if value.is_finite() {
+                Ok(value)
+            } else {
+                Err(domain_err("tan", args[0]))
             }
-            Ok(arg.ln())
+        }
+        "asin" => {
+            check_arity(args, 1, "asin")?;
+            if (-1.0..=1.0).contains(&args[0]) {
+                Ok(args[0].asin() * RAD_TO_DEG)
+            } else {
+                Err(domain_err("asin", args[0]))
+            }
+        }
+        "acos" => {
+            check_arity(args, 1, "acos")?;
+            if (-1.0..=1.0).contains(&args[0]) {
+                Ok(args[0].acos() * RAD_TO_DEG)
+            } else {
+                Err(domain_err("acos", args[0]))
+            }
+        }
+        "atan" => {
+            check_arity(args, 1, "atan")?;
+            Ok(args[0].atan() * RAD_TO_DEG)
+        }
+        "atan2" => {
+            check_arity(args, 2, "atan2")?;
+            Ok(args[0].atan2(args[1]) * RAD_TO_DEG)
+        }
+        _ => Err(ExpressionError::UnknownFunction(name.to_string())),
+    }
+}
+
+fn call_hyperbolic(name: &str, args: &[f64]) -> Result<f64, ExpressionError> {
+    match name {
+        "sinh" => {
+            check_arity(args, 1, "sinh")?;
+            guard_finite(args[0].sinh(), "sinh")
+        }
+        "cosh" => {
+            check_arity(args, 1, "cosh")?;
+            guard_finite(args[0].cosh(), "cosh")
+        }
+        "tanh" => {
+            check_arity(args, 1, "tanh")?;
+            Ok(args[0].tanh())
+        }
+        "asinh" => {
+            check_arity(args, 1, "asinh")?;
+            Ok(args[0].asinh())
+        }
+        "acosh" => {
+            check_arity(args, 1, "acosh")?;
+            if args[0] >= 1.0 {
+                Ok(args[0].acosh())
+            } else {
+                Err(domain_err("acosh", args[0]))
+            }
+        }
+        "atanh" => {
+            check_arity(args, 1, "atanh")?;
+            if args[0] > -1.0 && args[0] < 1.0 {
+                Ok(args[0].atanh())
+            } else {
+                Err(domain_err("atanh", args[0]))
+            }
+        }
+        _ => Err(ExpressionError::UnknownFunction(name.to_string())),
+    }
+}
+
+fn call_exp_log(name: &str, args: &[f64]) -> Result<f64, ExpressionError> {
+    match name {
+        "exp" => {
+            check_arity(args, 1, "exp")?;
+            guard_finite(args[0].exp(), "exp")
+        }
+        "log" | "ln" => {
+            check_arity(args, 1, name)?;
+            if args[0] > 0.0 {
+                Ok(args[0].ln())
+            } else {
+                Err(domain_err(name, args[0]))
+            }
         }
         "log10" => {
-            if arg <= 0.0 {
-                return Err(domain_err("log10"));
+            check_arity(args, 1, "log10")?;
+            if args[0] > 0.0 {
+                Ok(args[0].log10())
+            } else {
+                Err(domain_err("log10", args[0]))
             }
-            Ok(arg.log10())
         }
-        "sqrt" => {
-            if arg < 0.0 {
-                return Err(domain_err("sqrt"));
+        "log2" => {
+            check_arity(args, 1, "log2")?;
+            if args[0] > 0.0 {
+                Ok(args[0].log2())
+            } else {
+                Err(domain_err("log2", args[0]))
             }
-            Ok(arg.sqrt())
         }
-        "abs" => Ok(arg.abs()),
-        "ceil" => Ok(arg.ceil()),
-        "floor" => Ok(arg.floor()),
         _ => Err(ExpressionError::UnknownFunction(name.to_string())),
+    }
+}
+
+fn call_round_root_sign(name: &str, args: &[f64]) -> Result<f64, ExpressionError> {
+    match name {
+        "sqrt" => {
+            check_arity(args, 1, "sqrt")?;
+            if args[0] >= 0.0 {
+                Ok(args[0].sqrt())
+            } else {
+                Err(domain_err("sqrt", args[0]))
+            }
+        }
+        "cbrt" => {
+            check_arity(args, 1, "cbrt")?;
+            Ok(args[0].cbrt())
+        }
+        "abs" => {
+            check_arity(args, 1, "abs")?;
+            Ok(args[0].abs())
+        }
+        "ceil" => {
+            check_arity(args, 1, "ceil")?;
+            Ok(args[0].ceil())
+        }
+        "floor" => {
+            check_arity(args, 1, "floor")?;
+            Ok(args[0].floor())
+        }
+        "round" => {
+            check_arity(args, 1, "round")?;
+            Ok(args[0].round())
+        }
+        "trunc" => {
+            check_arity(args, 1, "trunc")?;
+            Ok(args[0].trunc())
+        }
+        "sign" => {
+            check_arity(args, 1, "sign")?;
+            Ok(if args[0] > 0.0 {
+                1.0
+            } else if args[0] < 0.0 {
+                -1.0
+            } else {
+                0.0
+            })
+        }
+        _ => Err(ExpressionError::UnknownFunction(name.to_string())),
+    }
+}
+
+fn call_multi_arg(name: &str, args: &[f64]) -> Result<f64, ExpressionError> {
+    match name {
+        "factorial" => {
+            check_arity(args, 1, "factorial")?;
+            factorial_f64(args[0])
+        }
+        "min" => {
+            if args.is_empty() {
+                return Err(ExpressionError::DomainError {
+                    op: "min".into(),
+                    value: "arity=0, expected>=1".into(),
+                });
+            }
+            Ok(args.iter().copied().fold(f64::INFINITY, f64::min))
+        }
+        "max" => {
+            if args.is_empty() {
+                return Err(ExpressionError::DomainError {
+                    op: "max".into(),
+                    value: "arity=0, expected>=1".into(),
+                });
+            }
+            Ok(args.iter().copied().fold(f64::NEG_INFINITY, f64::max))
+        }
+        "mod" => {
+            check_arity(args, 2, "mod")?;
+            if args[1] == 0.0 {
+                return Err(ExpressionError::DivisionByZero);
+            }
+            Ok(args[0] % args[1])
+        }
+        "hypot" => {
+            check_arity(args, 2, "hypot")?;
+            Ok(args[0].hypot(args[1]))
+        }
+        "pow" => {
+            check_arity(args, 2, "pow")?;
+            guard_finite(args[0].powf(args[1]), "pow")
+        }
+        "gcd" => {
+            check_arity(args, 2, "gcd")?;
+            integer_binop(args[0], args[1], "gcd", gcd_u64)
+        }
+        "lcm" => {
+            check_arity(args, 2, "lcm")?;
+            integer_binop(args[0], args[1], "lcm", lcm_u64)
+        }
+        _ => Err(ExpressionError::UnknownFunction(name.to_string())),
+    }
+}
+
+fn call_function(name: &str, args: &[f64]) -> Result<f64, ExpressionError> {
+    match name {
+        "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2" => call_trig(name, args),
+        "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh" => call_hyperbolic(name, args),
+        "exp" | "log" | "ln" | "log10" | "log2" => call_exp_log(name, args),
+        "sqrt" | "cbrt" | "abs" | "ceil" | "floor" | "round" | "trunc" | "sign" => {
+            call_round_root_sign(name, args)
+        }
+        "factorial" | "min" | "max" | "mod" | "hypot" | "pow" | "gcd" | "lcm" => {
+            call_multi_arg(name, args)
+        }
+        _ => Err(ExpressionError::UnknownFunction(name.to_string())),
+    }
+}
+
+fn guard_finite(value: f64, op: &str) -> Result<f64, ExpressionError> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(ExpressionError::Overflow { op: op.to_string() })
+    }
+}
+
+fn factorial_f64(value: f64) -> Result<f64, ExpressionError> {
+    if value.fract() != 0.0 || !(0.0..=170.0).contains(&value) {
+        return Err(ExpressionError::DomainError {
+            op: "factorial".into(),
+            value: format_arg(value),
+        });
+    }
+    // 170! fits in f64; 171! overflows to +Inf.
+    let Some(n): Option<u64> = num_traits::NumCast::from(value) else {
+        return Err(ExpressionError::DomainError {
+            op: "factorial".into(),
+            value: format_arg(value),
+        });
+    };
+    let mut acc = 1.0_f64;
+    for i in 2..=n {
+        let Some(factor): Option<f64> = num_traits::NumCast::from(i) else {
+            return Err(ExpressionError::Overflow {
+                op: "factorial".into(),
+            });
+        };
+        acc *= factor;
+    }
+    guard_finite(acc, "factorial")
+}
+
+fn integer_binop(
+    lhs: f64,
+    rhs: f64,
+    op: &str,
+    f: fn(u64, u64) -> u64,
+) -> Result<f64, ExpressionError> {
+    if lhs.fract() != 0.0 || rhs.fract() != 0.0 {
+        return Err(ExpressionError::DomainError {
+            op: op.to_string(),
+            value: format!("{},{}", format_arg(lhs), format_arg(rhs)),
+        });
+    }
+    let a: u64 =
+        num_traits::NumCast::from(lhs.abs()).ok_or_else(|| ExpressionError::DomainError {
+            op: op.to_string(),
+            value: format_arg(lhs),
+        })?;
+    let b: u64 =
+        num_traits::NumCast::from(rhs.abs()).ok_or_else(|| ExpressionError::DomainError {
+            op: op.to_string(),
+            value: format_arg(rhs),
+        })?;
+    let raw = f(a, b);
+    let result: f64 = num_traits::NumCast::from(raw)
+        .ok_or_else(|| ExpressionError::Overflow { op: op.to_string() })?;
+    Ok(result)
+}
+
+const fn gcd_u64(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+const fn lcm_u64(a: u64, b: u64) -> u64 {
+    if a == 0 || b == 0 {
+        0
+    } else {
+        a / gcd_u64(a, b) * b
     }
 }
 
@@ -660,6 +1001,27 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn zero_to_negative_power_is_division_by_zero() {
+        // 0^(-n) = 1/0 — must be classified as division by zero, not overflow.
+        assert!(matches!(
+            evaluate("0^(-1)").unwrap_err(),
+            ExpressionError::DivisionByZero
+        ));
+        assert!(matches!(
+            evaluate("0^(-3)").unwrap_err(),
+            ExpressionError::DivisionByZero
+        ));
+    }
+
+    #[test]
+    fn zero_to_zero_is_one() {
+        // Convention: 0^0 = 1 in this engine (matches f64::powf). Compare
+        // bit-for-bit to appease clippy::float_cmp and document the intent.
+        let result = evaluate("0^0").unwrap();
+        assert_eq!(result.to_bits(), 1.0_f64.to_bits(), "0^0 must be 1.0");
+    }
+
     // ---- Transcendental domain errors ----
 
     #[test]
@@ -861,5 +1223,253 @@ mod tests {
             }
             other => panic!("expected UnexpectedChar, got {other:?}"),
         }
+    }
+
+    // ---- constants ----
+
+    #[test]
+    fn const_pi() {
+        assert_close(evaluate("pi").unwrap(), std::f64::consts::PI);
+    }
+
+    #[test]
+    fn const_e() {
+        assert_close(evaluate("e").unwrap(), std::f64::consts::E);
+    }
+
+    #[test]
+    fn const_tau_is_two_pi() {
+        assert_close(evaluate("tau").unwrap(), std::f64::consts::TAU);
+    }
+
+    #[test]
+    fn const_phi_golden_ratio() {
+        assert_close(evaluate("phi").unwrap(), 1.618_033_988_749_895);
+    }
+
+    #[test]
+    fn variable_shadows_constant() {
+        // Variables win over built-in constants — keeps existing scripts safe
+        // if a caller already uses `pi` as a variable name.
+        let mut vars = HashMap::new();
+        vars.insert("pi".to_string(), 3.0);
+        assert_close(evaluate_with_variables("pi", &vars).unwrap(), 3.0);
+    }
+
+    #[test]
+    fn const_in_expression() {
+        // 2*pi and (e^2) both compose with operators
+        assert_close(evaluate("2 * pi").unwrap(), std::f64::consts::TAU);
+        assert_close(evaluate("e^2").unwrap(), std::f64::consts::E.powi(2));
+    }
+
+    // ---- new single-arg functions ----
+
+    #[test]
+    fn fn_exp() {
+        assert_close(evaluate("exp(0)").unwrap(), 1.0);
+        assert_close(evaluate("exp(1)").unwrap(), std::f64::consts::E);
+    }
+
+    #[test]
+    fn fn_ln_alias_for_log() {
+        assert_close(evaluate("ln(e)").unwrap(), 1.0);
+        assert_close(evaluate("ln(1)").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn fn_log2() {
+        assert_close(evaluate("log2(8)").unwrap(), 3.0);
+        assert_close(evaluate("log2(1024)").unwrap(), 10.0);
+    }
+
+    #[test]
+    fn fn_inverse_trig_returns_degrees() {
+        assert_close(evaluate("asin(1)").unwrap(), 90.0);
+        assert_close(evaluate("acos(0)").unwrap(), 90.0);
+        assert_close(evaluate("atan(1)").unwrap(), 45.0);
+    }
+
+    #[test]
+    fn fn_inverse_trig_domain_errors() {
+        assert!(matches!(
+            evaluate("asin(2)").unwrap_err(),
+            ExpressionError::DomainError { .. }
+        ));
+        assert!(matches!(
+            evaluate("acos(-2)").unwrap_err(),
+            ExpressionError::DomainError { .. }
+        ));
+    }
+
+    #[test]
+    fn fn_atan2_quadrants() {
+        assert_close(evaluate("atan2(1, 1)").unwrap(), 45.0);
+        assert_close(evaluate("atan2(1, 0)").unwrap(), 90.0);
+        assert_close(evaluate("atan2(-1, -1)").unwrap(), -135.0);
+    }
+
+    #[test]
+    fn fn_hyperbolic() {
+        assert_close(evaluate("sinh(0)").unwrap(), 0.0);
+        assert_close(evaluate("cosh(0)").unwrap(), 1.0);
+        assert_close(evaluate("tanh(0)").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn fn_inverse_hyperbolic() {
+        assert_close(evaluate("asinh(0)").unwrap(), 0.0);
+        assert_close(evaluate("acosh(1)").unwrap(), 0.0);
+        assert_close(evaluate("atanh(0)").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn fn_acosh_below_one_is_domain_error() {
+        assert!(matches!(
+            evaluate("acosh(0.5)").unwrap_err(),
+            ExpressionError::DomainError { .. }
+        ));
+    }
+
+    #[test]
+    fn fn_atanh_at_boundary_is_domain_error() {
+        assert!(matches!(
+            evaluate("atanh(1)").unwrap_err(),
+            ExpressionError::DomainError { .. }
+        ));
+        assert!(matches!(
+            evaluate("atanh(-1)").unwrap_err(),
+            ExpressionError::DomainError { .. }
+        ));
+    }
+
+    #[test]
+    fn fn_round_trunc_sign() {
+        assert_close(evaluate("round(2.5)").unwrap(), 3.0);
+        assert_close(evaluate("round(-2.5)").unwrap(), -3.0);
+        assert_close(evaluate("trunc(3.9)").unwrap(), 3.0);
+        assert_close(evaluate("trunc(-3.9)").unwrap(), -3.0);
+        assert_close(evaluate("sign(-7)").unwrap(), -1.0);
+        assert_close(evaluate("sign(0)").unwrap(), 0.0);
+        assert_close(evaluate("sign(5)").unwrap(), 1.0);
+    }
+
+    #[test]
+    fn fn_factorial() {
+        assert_close(evaluate("factorial(0)").unwrap(), 1.0);
+        assert_close(evaluate("factorial(5)").unwrap(), 120.0);
+        assert_close(evaluate("factorial(10)").unwrap(), 3_628_800.0);
+    }
+
+    #[test]
+    fn fn_factorial_negative_or_fractional_is_domain_error() {
+        assert!(matches!(
+            evaluate("factorial(-1)").unwrap_err(),
+            ExpressionError::DomainError { .. }
+        ));
+        assert!(matches!(
+            evaluate("factorial(1.5)").unwrap_err(),
+            ExpressionError::DomainError { .. }
+        ));
+    }
+
+    #[test]
+    fn fn_cbrt() {
+        assert_close(evaluate("cbrt(27)").unwrap(), 3.0);
+        assert_close(evaluate("cbrt(-8)").unwrap(), -2.0);
+    }
+
+    // ---- multi-arg functions ----
+
+    #[test]
+    fn fn_min_max_variadic() {
+        assert_close(evaluate("min(3, 1, 2)").unwrap(), 1.0);
+        assert_close(evaluate("max(3, 1, 2)").unwrap(), 3.0);
+        assert_close(evaluate("min(-5, -10, 0)").unwrap(), -10.0);
+    }
+
+    #[test]
+    fn fn_min_max_single_arg() {
+        assert_close(evaluate("min(7)").unwrap(), 7.0);
+        assert_close(evaluate("max(7)").unwrap(), 7.0);
+    }
+
+    #[test]
+    fn fn_mod_two_args() {
+        assert_close(evaluate("mod(10, 3)").unwrap(), 1.0);
+        assert_close(evaluate("mod(-7, 3)").unwrap(), -1.0);
+    }
+
+    #[test]
+    fn fn_mod_by_zero_is_division_error() {
+        assert!(matches!(
+            evaluate("mod(5, 0)").unwrap_err(),
+            ExpressionError::DivisionByZero
+        ));
+    }
+
+    #[test]
+    fn fn_hypot() {
+        assert_close(evaluate("hypot(3, 4)").unwrap(), 5.0);
+    }
+
+    #[test]
+    fn fn_pow_two_args() {
+        assert_close(evaluate("pow(2, 10)").unwrap(), 1024.0);
+        assert_close(evaluate("pow(2, 0.5)").unwrap(), std::f64::consts::SQRT_2);
+    }
+
+    #[test]
+    fn fn_gcd_lcm() {
+        assert_close(evaluate("gcd(12, 18)").unwrap(), 6.0);
+        assert_close(evaluate("gcd(7, 13)").unwrap(), 1.0);
+        assert_close(evaluate("lcm(4, 6)").unwrap(), 12.0);
+        assert_close(evaluate("lcm(0, 5)").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn fn_gcd_fractional_is_domain_error() {
+        assert!(matches!(
+            evaluate("gcd(2.5, 4)").unwrap_err(),
+            ExpressionError::DomainError { .. }
+        ));
+    }
+
+    #[test]
+    fn fn_arity_mismatch_is_domain_error() {
+        // sin needs 1 arg; passing 2 surfaces a DomainError with arity detail.
+        assert!(matches!(
+            evaluate("sin(1, 2)").unwrap_err(),
+            ExpressionError::DomainError { .. }
+        ));
+        assert!(matches!(
+            evaluate("atan2(1)").unwrap_err(),
+            ExpressionError::DomainError { .. }
+        ));
+    }
+
+    #[test]
+    fn fn_no_args_for_zero_arity_func_is_unknown() {
+        // We don't define any zero-arity functions; calling `pi()` is unknown.
+        assert!(matches!(
+            evaluate("pi()").unwrap_err(),
+            ExpressionError::UnknownFunction(_)
+        ));
+    }
+
+    // ---- composition with constants ----
+
+    #[test]
+    fn sin_pi_is_zero() {
+        // sin takes degrees; we want sin(pi rad) = sin(180°). Convert manually.
+        // But we also keep the constant available as the radian value, so this
+        // tests that constants compose cleanly with operator math.
+        let out = evaluate("sin(pi * 180 / pi)").unwrap();
+        assert_close(out, 0.0);
+    }
+
+    #[test]
+    fn exp_ln_round_trip() {
+        assert_close(evaluate("ln(exp(2.5))").unwrap(), 2.5);
     }
 }

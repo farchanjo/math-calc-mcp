@@ -1,4 +1,3 @@
-
 //! registry (category listing, unit listing, conversion factor, explanation).
 //!
 //! All public functions return `String` using the response envelope: inline

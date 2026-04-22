@@ -50,10 +50,7 @@ pub fn block_line(key: &str, value: &str) -> String {
 /// The `DETAIL` line is omitted when `detail` is `None` or empty after trim.
 #[must_use]
 pub fn format_error(tool: &str, code: &str, reason: &str, detail: Option<&str>) -> String {
-    let mut out = format!(
-        "{tool}: ERROR\nREASON: [{code}] {}",
-        sanitize_value(reason)
-    );
+    let mut out = format!("{tool}: ERROR\nREASON: [{code}] {}", sanitize_value(reason));
     if let Some(raw) = detail {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {

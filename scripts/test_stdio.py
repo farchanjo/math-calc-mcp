@@ -29,7 +29,7 @@ from subprocess import PIPE
 
 BINARY = os.environ.get(
     "MATH_CALC_MCP",
-    os.path.join(os.path.dirname(__file__), "..", "target", "release", "math-calc-mcp"),
+    os.path.join(os.path.dirname(__file__), "..", "target", "release", "arithma"),
 )
 
 # --------------------------------------------------------------------------- #
@@ -1108,6 +1108,336 @@ def test_digital(r: TestRunner) -> None:
 
 
 # --------------------------------------------------------------------------- #
+#  Statistics
+# --------------------------------------------------------------------------- #
+
+
+def test_statistics(r: TestRunner) -> None:
+    r.category("statistics", 16)
+    c = r.client.call
+
+    r.check("mean", "1..5", c("mean", {"values": "1,2,3,4,5"}),
+            lambda v: TestRunner.close(envelope_result(v, "MEAN"), 3.0))
+    r.check("median", "1..4", c("median", {"values": "1,2,3,4"}),
+            lambda v: TestRunner.close(envelope_result(v, "MEDIAN"), 2.5))
+    r.check("mode", "1,2,2,3", c("mode", {"values": "1,2,2,3"}),
+            lambda v: envelope_ok(v, "MODE") and envelope_field(v, "MODES") == "2.0")
+
+    r.check("variance", "sample 1..5", c("variance", {"values": "1,2,3,4,5", "population": False}),
+            lambda v: TestRunner.close(envelope_result(v, "VARIANCE"), 2.5))
+    r.check("stdDev", "sample 1..5", c("stdDev", {"values": "1,2,3,4,5", "population": False}),
+            lambda v: TestRunner.close(envelope_result(v, "STDDEV"), 1.5811388, 1e-5))
+
+    r.check("percentile", "p50", c("percentile", {"values": "1,2,3,4,5", "p": "50"}),
+            lambda v: TestRunner.close(envelope_result(v, "PERCENTILE"), 3.0))
+    r.check("quartile", "q1", c("quartile", {"values": "1,2,3,4,5", "q": 1}),
+            lambda v: envelope_ok(v, "QUARTILE") and TestRunner.close(envelope_field(v, "VALUE"), 2.0))
+    r.check("iqr", "1..9", c("iqr", {"values": "1,2,3,4,5,6,7,8,9"}),
+            lambda v: envelope_ok(v, "IQR") and TestRunner.close(envelope_field(v, "IQR"), 4.0))
+
+    r.check("correlation", "perfect +", c("correlation", {"xValues": "1,2,3,4,5", "yValues": "2,4,6,8,10"}),
+            lambda v: TestRunner.close(envelope_result(v, "CORRELATION"), 1.0))
+    r.check("covariance", "sample", c("covariance", {"xValues": "1,2,3,4,5", "yValues": "2,4,6,8,10", "population": False}),
+            lambda v: TestRunner.close(envelope_result(v, "COVARIANCE"), 5.0))
+
+    r.check("linearRegression", "y=2x+1", c("linearRegression", {"xValues": "0,1,2,3,4", "yValues": "1,3,5,7,9"}),
+            lambda v: envelope_ok(v, "LINEAR_REGRESSION")
+            and TestRunner.close(envelope_field(v, "SLOPE"), 2.0)
+            and TestRunner.close(envelope_field(v, "INTERCEPT"), 1.0))
+
+    r.check("normalPdf", "f(0;0,1)", c("normalPdf", {"x": "0", "mean": "0", "stdDev": "1"}),
+            lambda v: TestRunner.close(envelope_result(v, "NORMAL_PDF"), 0.3989422804, 1e-4))
+    r.check("normalCdf", "F(1;0,1)", c("normalCdf", {"x": "1", "mean": "0", "stdDev": "1"}),
+            lambda v: TestRunner.close(envelope_result(v, "NORMAL_CDF"), 0.8413, 1e-3))
+
+    r.check("tTestOneSample", "t=?", c("tTestOneSample", {"values": "1,2,3,4,5", "hypothesizedMean": "2.5"}),
+            lambda v: envelope_ok(v, "T_TEST") and TestRunner.close(envelope_field(v, "T"), 0.7071, 1e-3))
+    r.check("binomialPmf", "B(10,5,0.5)", c("binomialPmf", {"n": 10, "k": 5, "p": "0.5"}),
+            lambda v: TestRunner.close(envelope_result(v, "BINOMIAL_PMF"), 0.2461, 1e-3))
+    r.check("confidenceInterval", "95%", c("confidenceInterval",
+                                          {"values": "1,2,3,4,5", "confidenceLevel": "0.95"}),
+            lambda v: envelope_ok(v, "CONFIDENCE_INTERVAL")
+            and TestRunner.close(envelope_field(v, "MEAN"), 3.0))
+
+
+# --------------------------------------------------------------------------- #
+#  Combinatorics
+# --------------------------------------------------------------------------- #
+
+
+def test_combinatorics(r: TestRunner) -> None:
+    r.category("combinatorics", 7)
+    c = r.client.call
+
+    r.check("combination", "C(10,3)", c("combination", {"n": 10, "k": 3}),
+            lambda v: envelope_result(v, "COMBINATION") == "120")
+    r.check("permutation", "P(5,2)", c("permutation", {"n": 5, "k": 2}),
+            lambda v: envelope_result(v, "PERMUTATION") == "20")
+    r.check("fibonacci", "fib(20)", c("fibonacci", {"n": 20}),
+            lambda v: envelope_result(v, "FIBONACCI") == "6765")
+    r.check("isPrime", "13", c("isPrime", {"n": 13}),
+            lambda v: envelope_ok(v, "IS_PRIME") and envelope_field(v, "IS_PRIME") == "true")
+    r.check("nextPrime", "7", c("nextPrime", {"n": 7}),
+            lambda v: envelope_result(v, "NEXT_PRIME") == "11")
+    r.check("primeFactors", "12", c("primeFactors", {"n": 12}),
+            lambda v: envelope_ok(v, "PRIME_FACTORS") and envelope_field(v, "FACTORS") == "2,2,3")
+    r.check("eulerTotient", "φ(10)", c("eulerTotient", {"n": 10}),
+            lambda v: envelope_result(v, "EULER_TOTIENT") == "4")
+
+
+# --------------------------------------------------------------------------- #
+#  Geometry
+# --------------------------------------------------------------------------- #
+
+
+def test_geometry(r: TestRunner) -> None:
+    r.category("geometry", 12)
+    c = r.client.call
+    import math
+
+    r.check("circleArea", "r=1", c("circleArea", {"radius": "1"}),
+            lambda v: TestRunner.close(envelope_result(v, "CIRCLE_AREA"), math.pi, 1e-9))
+    r.check("circlePerimeter", "r=1", c("circlePerimeter", {"radius": "1"}),
+            lambda v: TestRunner.close(envelope_result(v, "CIRCLE_PERIMETER"), 2 * math.pi, 1e-9))
+    r.check("sphereVolume", "r=1", c("sphereVolume", {"radius": "1"}),
+            lambda v: TestRunner.close(envelope_result(v, "SPHERE_VOLUME"), 4/3 * math.pi, 1e-9))
+    r.check("sphereArea", "r=1", c("sphereArea", {"radius": "1"}),
+            lambda v: TestRunner.close(envelope_result(v, "SPHERE_AREA"), 4 * math.pi, 1e-9))
+
+    r.check("triangleArea", "3-4-5", c("triangleArea", {"sides": "3,4,5"}),
+            lambda v: TestRunner.close(envelope_result(v, "TRIANGLE_AREA"), 6.0, 1e-9))
+    r.check("polygonArea", "unit square", c("polygonArea", {"coordinates": "0,0,1,0,1,1,0,1"}),
+            lambda v: envelope_ok(v, "POLYGON_AREA") and TestRunner.close(envelope_field(v, "AREA"), 1.0))
+
+    r.check("coneVolume", "r=1,h=3", c("coneVolume", {"radius": "1", "height": "3"}),
+            lambda v: TestRunner.close(envelope_result(v, "CONE_VOLUME"), math.pi, 1e-9))
+    r.check("cylinderVolume", "r=1,h=1", c("cylinderVolume", {"radius": "1", "height": "1"}),
+            lambda v: TestRunner.close(envelope_result(v, "CYLINDER_VOLUME"), math.pi, 1e-9))
+
+    r.check("distance2D", "0,0→3,4", c("distance2D", {"p1": "0,0", "p2": "3,4"}),
+            lambda v: TestRunner.close(envelope_result(v, "DISTANCE_2D"), 5.0))
+    r.check("distance3D", "origin→(1,1,1)", c("distance3D", {"p1": "0,0,0", "p2": "1,1,1"}),
+            lambda v: TestRunner.close(envelope_result(v, "DISTANCE_3D"), math.sqrt(3), 1e-9))
+
+    r.check("regularPolygon", "square s=2", c("regularPolygon", {"sides": 4, "sideLength": "2"}),
+            lambda v: envelope_ok(v, "REGULAR_POLYGON")
+            and TestRunner.close(envelope_field(v, "AREA"), 4.0))
+    r.check("pointToLineDistance", "0,0→x=1", c("pointToLineDistance",
+                                               {"point": "0,0", "lineP1": "1,0", "lineP2": "1,5"}),
+            lambda v: TestRunner.close(envelope_result(v, "POINT_TO_LINE_DISTANCE"), 1.0))
+
+
+# --------------------------------------------------------------------------- #
+#  Complex numbers
+# --------------------------------------------------------------------------- #
+
+
+def test_complex(r: TestRunner) -> None:
+    r.category("complex", 10)
+    c = r.client.call
+
+    r.check("complexAdd", "(1+2i)+(3+4i)", c("complexAdd", {"a": "1,2", "b": "3,4"}),
+            lambda v: envelope_ok(v, "COMPLEX_ADD")
+            and TestRunner.close(envelope_field(v, "REAL"), 4.0)
+            and TestRunner.close(envelope_field(v, "IMAG"), 6.0))
+    r.check("complexMult", "(1+2i)*(3+4i)", c("complexMult", {"a": "1,2", "b": "3,4"}),
+            lambda v: envelope_ok(v, "COMPLEX_MULT")
+            and TestRunner.close(envelope_field(v, "REAL"), -5.0)
+            and TestRunner.close(envelope_field(v, "IMAG"), 10.0))
+    r.check("complexDiv", "(1+2i)/(3+4i)", c("complexDiv", {"a": "1,2", "b": "3,4"}),
+            lambda v: envelope_ok(v, "COMPLEX_DIV")
+            and TestRunner.close(envelope_field(v, "REAL"), 0.44, 1e-4))
+    r.check("complexConjugate", "3+5i", c("complexConjugate", {"z": "3,5"}),
+            lambda v: envelope_ok(v, "COMPLEX_CONJUGATE")
+            and TestRunner.close(envelope_field(v, "IMAG"), -5.0))
+    r.check("complexPower", "(1+i)^2", c("complexPower", {"z": "1,1", "exponent": "2"}),
+            lambda v: envelope_ok(v, "COMPLEX_POWER")
+            and TestRunner.close(envelope_field(v, "IMAG"), 2.0, 1e-6))
+    r.check("complexMagnitude", "3+4i", c("complexMagnitude", {"z": "3,4"}),
+            lambda v: TestRunner.close(envelope_result(v, "COMPLEX_MAGNITUDE"), 5.0))
+    r.check("complexPhase", "i", c("complexPhase", {"z": "0,1"}),
+            lambda v: TestRunner.close(envelope_result(v, "COMPLEX_PHASE"), 90.0))
+    r.check("polarToRect", "r=2,θ=90°", c("polarToRect", {"magnitude": "2", "angleDegrees": "90"}),
+            lambda v: envelope_ok(v, "POLAR_TO_RECT")
+            and TestRunner.close(envelope_field(v, "IMAG"), 2.0, 1e-9))
+    r.check("rectToPolar", "2i", c("rectToPolar", {"z": "0,2"}),
+            lambda v: envelope_ok(v, "RECT_TO_POLAR")
+            and TestRunner.close(envelope_field(v, "MAGNITUDE"), 2.0))
+    r.check("complexSqrt", "-1", c("complexSqrt", {"z": "-1,0"}),
+            lambda v: envelope_ok(v, "COMPLEX_SQRT")
+            and TestRunner.close(envelope_field(v, "IMAG"), 1.0, 1e-9))
+
+
+# --------------------------------------------------------------------------- #
+#  Crypto/Encoding
+# --------------------------------------------------------------------------- #
+
+
+def test_crypto(r: TestRunner) -> None:
+    r.category("crypto", 10)
+    c = r.client.call
+
+    r.check("hashMd5", "abc", c("hashMd5", {"input": "abc"}),
+            lambda v: envelope_result(v, "HASH_MD5") == "900150983cd24fb0d6963f7d28e17f72")
+    r.check("hashSha1", "abc", c("hashSha1", {"input": "abc"}),
+            lambda v: envelope_result(v, "HASH_SHA1") == "a9993e364706816aba3e25717850c26c9cd0d89d")
+    r.check("hashSha256", "abc", c("hashSha256", {"input": "abc"}),
+            lambda v: envelope_result(v, "HASH_SHA256")
+            == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    r.check("hashSha512", "abc prefix", c("hashSha512", {"input": "abc"}),
+            lambda v: envelope_ok(v, "HASH_SHA512")
+            and envelope_result(v, "HASH_SHA512").startswith("ddaf35a193617aba"))
+
+    r.check("base64Encode", "Hello, world!", c("base64Encode", {"input": "Hello, world!"}),
+            lambda v: envelope_result(v, "BASE64_ENCODE") == "SGVsbG8sIHdvcmxkIQ==")
+    r.check("base64Decode", "SGVsbG8sIHdvcmxkIQ==", c("base64Decode", {"input": "SGVsbG8sIHdvcmxkIQ=="}),
+            lambda v: envelope_result(v, "BASE64_DECODE") == "Hello, world!")
+
+    r.check("urlEncode", "hello world!", c("urlEncode", {"input": "hello world!"}),
+            lambda v: envelope_result(v, "URL_ENCODE") == "hello%20world%21")
+    r.check("urlDecode", "encoded", c("urlDecode", {"input": "hello%20world%21"}),
+            lambda v: envelope_result(v, "URL_DECODE") == "hello world!")
+
+    r.check("hexEncode", "ABC", c("hexEncode", {"input": "ABC"}),
+            lambda v: envelope_result(v, "HEX_ENCODE") == "414243")
+    r.check("crc32", "123456789", c("crc32", {"input": "123456789"}),
+            lambda v: envelope_ok(v, "CRC32") and envelope_field(v, "HEX") == "cbf43926")
+
+
+# --------------------------------------------------------------------------- #
+#  Matrices
+# --------------------------------------------------------------------------- #
+
+
+def test_matrices(r: TestRunner) -> None:
+    r.category("matrices", 10)
+    c = r.client.call
+
+    r.check("matrixAdd", "2x2", c("matrixAdd", {"a": "1,2;3,4", "b": "5,6;7,8"}),
+            lambda v: envelope_ok(v, "MATRIX_ADD")
+            and envelope_field(v, "MATRIX") == "6.0,8.0;10.0,12.0")
+    r.check("matrixMultiply", "2x2*I", c("matrixMultiply", {"a": "1,2;3,4", "b": "1,0;0,1"}),
+            lambda v: envelope_ok(v, "MATRIX_MULT")
+            and envelope_field(v, "MATRIX") == "1.0,2.0;3.0,4.0")
+    r.check("matrixTranspose", "2x3", c("matrixTranspose", {"a": "1,2,3;4,5,6"}),
+            lambda v: envelope_ok(v, "MATRIX_TRANSPOSE")
+            and envelope_field(v, "MATRIX") == "1.0,4.0;2.0,5.0;3.0,6.0")
+    r.check("matrixDeterminant", "2x2", c("matrixDeterminant", {"a": "1,2;3,4"}),
+            lambda v: TestRunner.close(envelope_result(v, "MATRIX_DETERMINANT"), -2.0))
+    r.check("matrixInverse", "2x2 invertible", c("matrixInverse", {"a": "1,2;3,4"}),
+            lambda v: envelope_ok(v, "MATRIX_INVERSE"))
+    r.check("matrixTrace", "diag(1,2,3)", c("matrixTrace", {"a": "1,0,0;0,2,0;0,0,3"}),
+            lambda v: TestRunner.close(envelope_result(v, "MATRIX_TRACE"), 6.0))
+    r.check("matrixRank", "full rank 2x2", c("matrixRank", {"a": "1,2;3,4"}),
+            lambda v: envelope_result(v, "MATRIX_RANK") == "2")
+    r.check("matrixEigenvalues2x2", "diag(2,3)", c("matrixEigenvalues2x2", {"a": "2,0;0,3"}),
+            lambda v: envelope_ok(v, "MATRIX_EIGENVALUES_2X2")
+            and envelope_field(v, "KIND") == "real")
+    r.check("crossProduct", "i×j=k", c("crossProduct", {"a": "1,0,0", "b": "0,1,0"}),
+            lambda v: envelope_result(v, "CROSS_PRODUCT") == "0.0,0.0,1.0")
+    r.check("gaussianElimination", "2x3 system", c("gaussianElimination", {"coefficients": "1,1,3;2,3,8"}),
+            lambda v: envelope_ok(v, "GAUSSIAN_ELIMINATION")
+            and envelope_field(v, "SOLUTION") == "1.0,2.0")
+
+
+# --------------------------------------------------------------------------- #
+#  Physics
+# --------------------------------------------------------------------------- #
+
+
+def test_physics(r: TestRunner) -> None:
+    r.category("physics", 12)
+    c = r.client.call
+    import math
+
+    r.check("kinematics", "v0=0,a=10,t=2", c("kinematics",
+                                             {"initialVelocity": "0", "acceleration": "10", "time": "2"}),
+            lambda v: envelope_ok(v, "KINEMATICS")
+            and TestRunner.close(envelope_field(v, "FINAL_VELOCITY"), 20.0)
+            and TestRunner.close(envelope_field(v, "DISPLACEMENT"), 20.0))
+
+    r.check("projectileMotion", "v=10,θ=45,g=9.81",
+            c("projectileMotion", {"speed": "10", "angleDegrees": "45", "gravity": "9.81"}),
+            lambda v: envelope_ok(v, "PROJECTILE_MOTION")
+            and TestRunner.close(envelope_field(v, "RANGE"), 100.0 / 9.81, 1e-3))
+
+    r.check("newtonsForce", "m=5,a=2", c("newtonsForce", {"mass": "5", "acceleration": "2"}),
+            lambda v: TestRunner.close(envelope_result(v, "NEWTONS_FORCE"), 10.0))
+
+    r.check("gravitationalForce", "unit masses 1m",
+            c("gravitationalForce", {"m1": "1", "m2": "1", "distance": "1"}),
+            lambda v: TestRunner.close(envelope_result(v, "GRAVITATIONAL_FORCE"), 6.674e-11, 1e-15))
+
+    r.check("dopplerEffect", "observer approaches",
+            c("dopplerEffect", {"sourceFreq": "440", "soundSpeed": "340",
+                                "sourceVelocity": "0", "observerVelocity": "170"}),
+            lambda v: TestRunner.close(envelope_result(v, "DOPPLER_EFFECT"), 660.0, 1e-3))
+
+    r.check("waveLength", "1MHz light",
+            c("waveLength", {"frequency": "1000000", "waveSpeed": "300000000"}),
+            lambda v: TestRunner.close(envelope_result(v, "WAVE_LENGTH"), 300.0))
+
+    r.check("planckEnergy", "f=1Hz", c("planckEnergy", {"frequency": "1"}),
+            lambda v: TestRunner.close(envelope_result(v, "PLANCK_ENERGY"), 6.626e-34, 1e-40))
+
+    r.check("idealGasLaw", "solve V",
+            c("idealGasLaw", {"pressure": "101325", "volume": "0",
+                              "moles": "1", "temperature": "273.15", "solveFor": "V"}),
+            lambda v: envelope_ok(v, "IDEAL_GAS_LAW")
+            and TestRunner.close(envelope_field(v, "VALUE"), 0.0224, 1e-3))
+
+    r.check("heatTransfer", "k=10,A=1,ΔT=20,L=2",
+            c("heatTransfer", {"thermalConductivity": "10", "area": "1",
+                               "deltaTemp": "20", "thickness": "2"}),
+            lambda v: TestRunner.close(envelope_result(v, "HEAT_TRANSFER"), 100.0))
+
+    r.check("stefanBoltzmann", "ε=1,A=1,T=300",
+            c("stefanBoltzmann", {"emissivity": "1", "area": "1", "temperatureK": "300"}),
+            lambda v: TestRunner.close(envelope_result(v, "STEFAN_BOLTZMANN"),
+                                       5.670e-8 * 300**4, 0.1))
+
+    r.check("escapeVelocity", "Earth",
+            c("escapeVelocity", {"mass": "5.972e24", "radius": "6.371e6"}),
+            lambda v: TestRunner.close(envelope_result(v, "ESCAPE_VELOCITY"), 11186.0, 10.0))
+
+    r.check("orbitalVelocity", "ISS altitude",
+            c("orbitalVelocity", {"mass": "5.972e24", "radius": "6.78e6"}),
+            lambda v: TestRunner.close(envelope_result(v, "ORBITAL_VELOCITY"), 7660.0, 100.0))
+
+
+# --------------------------------------------------------------------------- #
+#  Chemistry
+# --------------------------------------------------------------------------- #
+
+
+def test_chemistry(r: TestRunner) -> None:
+    r.category("chemistry", 9)
+    c = r.client.call
+
+    r.check("molarMass", "H2O", c("molarMass", {"formula": "H2O"}),
+            lambda v: envelope_ok(v, "MOLAR_MASS")
+            and TestRunner.close(envelope_field(v, "MOLAR_MASS_G_MOL"), 18.015, 1e-2))
+    r.check("ph", "[H+]=1e-7", c("ph", {"hConcentration": "0.0000001"}),
+            lambda v: TestRunner.close(envelope_result(v, "PH"), 7.0, 1e-9))
+    r.check("poh", "[OH-]=1e-3", c("poh", {"ohConcentration": "0.001"}),
+            lambda v: TestRunner.close(envelope_result(v, "POH"), 3.0, 1e-9))
+    r.check("molarity", "1mol/0.5L", c("molarity", {"moles": "1", "volumeLitres": "0.5"}),
+            lambda v: TestRunner.close(envelope_result(v, "MOLARITY"), 2.0))
+    r.check("molality", "1mol/0.5kg", c("molality", {"moles": "1", "kilogramsSolvent": "0.5"}),
+            lambda v: TestRunner.close(envelope_result(v, "MOLALITY"), 2.0))
+    r.check("hendersonHasselbalch", "equal conc",
+            c("hendersonHasselbalch", {"pka": "4.76", "conjugateBase": "1", "weakAcid": "1"}),
+            lambda v: TestRunner.close(envelope_result(v, "HENDERSON_HASSELBALCH"), 4.76, 1e-6))
+    r.check("halfLife", "λ=0.0693", c("halfLife", {"decayConstant": "0.0693147181"}),
+            lambda v: TestRunner.close(envelope_result(v, "HALF_LIFE"), 10.0, 1e-3))
+    r.check("decayConstant", "t½=10", c("decayConstant", {"halfLife": "10"}),
+            lambda v: TestRunner.close(envelope_result(v, "DECAY_CONSTANT"), 0.0693147, 1e-6))
+    r.check("idealGasMoles", "1atm, 22.4L, 273K",
+            c("idealGasMoles", {"pressurePa": "101325", "volumeM3": "0.0224", "temperatureK": "273.15"}),
+            lambda v: TestRunner.close(envelope_result(v, "IDEAL_GAS_MOLES"), 1.0, 1e-2))
+
+
+# --------------------------------------------------------------------------- #
 #  Main driver
 # --------------------------------------------------------------------------- #
 
@@ -1124,7 +1454,7 @@ def main() -> int:
     try:
         client.initialize()
         tool_names = client.list_tools()
-        print(f"Server reported {len(tool_names)} tools via tools/list (expected 87)")
+        print(f"Server reported {len(tool_names)} tools via tools/list (expected 173)")
 
         runner = TestRunner(client)
 
@@ -1143,6 +1473,14 @@ def main() -> int:
         test_network(runner)
         test_analog(runner)
         test_digital(runner)
+        test_statistics(runner)
+        test_combinatorics(runner)
+        test_geometry(runner)
+        test_complex(runner)
+        test_crypto(runner)
+        test_matrices(runner)
+        test_physics(runner)
+        test_chemistry(runner)
 
         # --- summary --- #
         total = len(runner.results)
@@ -1162,7 +1500,7 @@ def main() -> int:
             print(f"  {cat:22s} {n_ok}/{n_total}")
 
         print("=" * 60)
-        print(f"RESULTS: {passed}/{total} passed, {total - passed} failed (87 tools expected)")
+        print(f"RESULTS: {passed}/{total} passed, {total - passed} failed (173 tools expected)")
         if failures:
             print("FAILURES:")
             for _cat, tool, desc, _ok, detail in failures:

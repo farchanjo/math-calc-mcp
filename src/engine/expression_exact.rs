@@ -35,6 +35,28 @@ const AF_PRECISION: usize = 192;
 const MAX_POWER_RESULT_LEN: u64 = 10_000;
 const DEG_TO_RAD_LITERAL: &str =
     "0.017453292519943295769236907684886127134428718885417254560971914401710091146034";
+const RAD_TO_DEG_LITERAL: &str =
+    "57.29577951308232087679815481410517033240547246656432154916024386120284714832156";
+
+/// Built-in constants exposed to expressions. Strings to preserve full precision
+/// when round-tripping through `BigDecimal`. All decimals truncated to ~38 digits
+/// matching [`EXACT_PRECISION`].
+const PI_LITERAL: &str = "3.1415926535897932384626433832795028842";
+const E_LITERAL: &str = "2.7182818284590452353602874713526624978";
+const TAU_LITERAL: &str = "6.2831853071795864769252867665590057684";
+const PHI_LITERAL: &str = "1.6180339887498948482045868343656381177";
+
+/// Resolve a bare identifier as an exact-precision built-in constant.
+fn lookup_constant(name: &str) -> Option<BigDecimal> {
+    let literal = match name {
+        "pi" => PI_LITERAL,
+        "e" => E_LITERAL,
+        "tau" => TAU_LITERAL,
+        "phi" => PHI_LITERAL,
+        _ => return None,
+    };
+    BigDecimal::from_str(literal).ok()
+}
 
 /// Evaluate an expression exactly.
 ///
@@ -125,6 +147,17 @@ fn to_radians(degrees: &BigDecimal, consts: &mut Consts) -> BigFloat {
     deg_bf.mul(&factor, AF_PRECISION, AfRm::ToEven)
 }
 
+fn radians_to_degrees(rad: &BigFloat, consts: &mut Consts) -> BigFloat {
+    let factor = BigFloat::parse(
+        RAD_TO_DEG_LITERAL,
+        Radix::Dec,
+        AF_PRECISION,
+        AfRm::None,
+        consts,
+    );
+    rad.mul(&factor, AF_PRECISION, AfRm::ToEven)
+}
+
 // --------------------------------------------------------------------------- //
 //  Exact arithmetic helpers
 // --------------------------------------------------------------------------- //
@@ -154,11 +187,7 @@ fn as_nonneg_u32(exp: &BigDecimal) -> Option<u32> {
 /// Reject astro-float results that leaked NaN / ±Inf — those mean the operand
 /// left the transcendental's real-valued domain (e.g. `log(0)`, `sqrt(-2)`).
 /// Without this guard, `bf_to_bd` would silently turn them into `0`.
-fn finite_or_domain(
-    bf: &BigFloat,
-    op: &str,
-    value: &BigDecimal,
-) -> Result<(), ExpressionError> {
+fn finite_or_domain(bf: &BigFloat, op: &str, value: &BigDecimal) -> Result<(), ExpressionError> {
     if bf.is_nan() || bf.is_inf() {
         return Err(ExpressionError::DomainError {
             op: op.to_string(),
@@ -187,7 +216,11 @@ fn guard_integer_power_size(base: &BigDecimal, exp: u32) -> Result<(), Expressio
 /// Exponentiation. Integer exponents stay exact via `BigDecimal::powi`;
 /// negative integers invert the base; fractional or very large integers fall
 /// through to `BigFloat` and round back.
-fn power(base: &BigDecimal, exp: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
+fn power(
+    base: &BigDecimal,
+    exp: &BigDecimal,
+    consts: &mut Consts,
+) -> Result<BigDecimal, ExpressionError> {
     if let Some(e) = as_nonneg_u32(exp) {
         guard_integer_power_size(base, e)?;
         return Ok(base.powi(i64::from(e)));
@@ -262,6 +295,263 @@ fn tan_bd(degrees: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, Expre
     Ok(bf_to_bd(&out, consts))
 }
 
+fn exp_bd(value: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
+    let bf = bd_to_bf(value, consts);
+    let out = bf.exp(AF_PRECISION, AfRm::ToEven, consts);
+    finite_or_domain(&out, "exp", value)?;
+    Ok(bf_to_bd(&out, consts))
+}
+
+fn asin_bd(value: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
+    let one = BigDecimal::from(1);
+    let neg_one = BigDecimal::from(-1);
+    if value < &neg_one || value > &one {
+        return Err(ExpressionError::DomainError {
+            op: "asin".into(),
+            value: value.to_plain_string(),
+        });
+    }
+    let bf = bd_to_bf(value, consts);
+    let rad = bf.asin(AF_PRECISION, AfRm::ToEven, consts);
+    finite_or_domain(&rad, "asin", value)?;
+    let deg = radians_to_degrees(&rad, consts);
+    Ok(bf_to_bd(&deg, consts))
+}
+
+fn acos_bd(value: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
+    let one = BigDecimal::from(1);
+    let neg_one = BigDecimal::from(-1);
+    if value < &neg_one || value > &one {
+        return Err(ExpressionError::DomainError {
+            op: "acos".into(),
+            value: value.to_plain_string(),
+        });
+    }
+    let bf = bd_to_bf(value, consts);
+    let rad = bf.acos(AF_PRECISION, AfRm::ToEven, consts);
+    finite_or_domain(&rad, "acos", value)?;
+    let deg = radians_to_degrees(&rad, consts);
+    Ok(bf_to_bd(&deg, consts))
+}
+
+fn atan_bd(value: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
+    let bf = bd_to_bf(value, consts);
+    let rad = bf.atan(AF_PRECISION, AfRm::ToEven, consts);
+    finite_or_domain(&rad, "atan", value)?;
+    let deg = radians_to_degrees(&rad, consts);
+    Ok(bf_to_bd(&deg, consts))
+}
+
+fn sinh_bd(value: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
+    let bf = bd_to_bf(value, consts);
+    let out = bf.sinh(AF_PRECISION, AfRm::ToEven, consts);
+    finite_or_domain(&out, "sinh", value)?;
+    Ok(bf_to_bd(&out, consts))
+}
+
+fn cosh_bd(value: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
+    let bf = bd_to_bf(value, consts);
+    let out = bf.cosh(AF_PRECISION, AfRm::ToEven, consts);
+    finite_or_domain(&out, "cosh", value)?;
+    Ok(bf_to_bd(&out, consts))
+}
+
+fn tanh_bd(value: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
+    let bf = bd_to_bf(value, consts);
+    let out = bf.tanh(AF_PRECISION, AfRm::ToEven, consts);
+    finite_or_domain(&out, "tanh", value)?;
+    Ok(bf_to_bd(&out, consts))
+}
+
+/// Common helper for the inverse hyperbolics — astro-float exposes them as
+/// `BigFloat::asinh / acosh / atanh`. acosh requires `x >= 1`; atanh requires
+/// `|x| < 1`. Domain checks happen on the `BigDecimal` operand before the
+/// transcendental call so the error detail keeps the original input.
+fn asinh_bd(value: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
+    let bf = bd_to_bf(value, consts);
+    let out = bf.asinh(AF_PRECISION, AfRm::ToEven, consts);
+    finite_or_domain(&out, "asinh", value)?;
+    Ok(bf_to_bd(&out, consts))
+}
+
+fn acosh_bd(value: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
+    if value < &BigDecimal::from(1) {
+        return Err(ExpressionError::DomainError {
+            op: "acosh".into(),
+            value: value.to_plain_string(),
+        });
+    }
+    let bf = bd_to_bf(value, consts);
+    let out = bf.acosh(AF_PRECISION, AfRm::ToEven, consts);
+    finite_or_domain(&out, "acosh", value)?;
+    Ok(bf_to_bd(&out, consts))
+}
+
+fn atanh_bd(value: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
+    let one = BigDecimal::from(1);
+    let neg_one = BigDecimal::from(-1);
+    if value <= &neg_one || value >= &one {
+        return Err(ExpressionError::DomainError {
+            op: "atanh".into(),
+            value: value.to_plain_string(),
+        });
+    }
+    let bf = bd_to_bf(value, consts);
+    let out = bf.atanh(AF_PRECISION, AfRm::ToEven, consts);
+    finite_or_domain(&out, "atanh", value)?;
+    Ok(bf_to_bd(&out, consts))
+}
+
+fn cbrt_bd(value: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
+    let bf = bd_to_bf(value, consts);
+    let out = bf.cbrt(AF_PRECISION, AfRm::ToEven);
+    finite_or_domain(&out, "cbrt", value)?;
+    Ok(bf_to_bd(&out, consts))
+}
+
+fn round_bd(value: &BigDecimal) -> BigDecimal {
+    value.with_scale_round(0, BdRm::HalfUp)
+}
+
+fn trunc_bd(value: &BigDecimal) -> BigDecimal {
+    value.with_scale_round(0, BdRm::Down)
+}
+
+fn sign_bd(value: &BigDecimal) -> BigDecimal {
+    if value.is_zero() {
+        BigDecimal::zero()
+    } else if value.is_negative() {
+        BigDecimal::from(-1)
+    } else {
+        BigDecimal::from(1)
+    }
+}
+
+fn factorial_bd(value: &BigDecimal) -> Result<BigDecimal, ExpressionError> {
+    if !value.is_integer() || value.is_negative() {
+        return Err(ExpressionError::DomainError {
+            op: "factorial".into(),
+            value: value.to_plain_string(),
+        });
+    }
+    let n = value.to_u32().ok_or_else(|| ExpressionError::DomainError {
+        op: "factorial".into(),
+        value: value.to_plain_string(),
+    })?;
+    if n > 1000 {
+        return Err(ExpressionError::Overflow {
+            op: "factorial".into(),
+        });
+    }
+    let mut acc = BigDecimal::from(1);
+    for i in 2..=n {
+        acc = &acc * BigDecimal::from(i);
+    }
+    Ok(acc)
+}
+
+fn integer_binop_bd(
+    lhs: &BigDecimal,
+    rhs: &BigDecimal,
+    op: &str,
+    f: fn(u64, u64) -> u64,
+) -> Result<BigDecimal, ExpressionError> {
+    if !lhs.is_integer() || !rhs.is_integer() {
+        return Err(ExpressionError::DomainError {
+            op: op.to_string(),
+            value: format!("{},{}", lhs.to_plain_string(), rhs.to_plain_string()),
+        });
+    }
+    let a = lhs
+        .abs()
+        .to_u64()
+        .ok_or_else(|| ExpressionError::DomainError {
+            op: op.to_string(),
+            value: lhs.to_plain_string(),
+        })?;
+    let b = rhs
+        .abs()
+        .to_u64()
+        .ok_or_else(|| ExpressionError::DomainError {
+            op: op.to_string(),
+            value: rhs.to_plain_string(),
+        })?;
+    Ok(BigDecimal::from(f(a, b)))
+}
+
+const fn gcd_u64(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+const fn lcm_u64(a: u64, b: u64) -> u64 {
+    if a == 0 || b == 0 {
+        0
+    } else {
+        a / gcd_u64(a, b) * b
+    }
+}
+
+fn check_arity_bd(args: &[BigDecimal], expected: usize, op: &str) -> Result<(), ExpressionError> {
+    if args.len() == expected {
+        Ok(())
+    } else {
+        Err(ExpressionError::DomainError {
+            op: op.to_string(),
+            value: format!("arity={}, expected={expected}", args.len()),
+        })
+    }
+}
+
+/// `atan2(y, x)` in degrees. astro-float doesn't expose atan2 directly, so we
+/// reduce to `atan(y/x)` with quadrant fixups (±π) and special-case the axes.
+/// Result range: (-180, 180].
+fn atan2_bd(
+    y: &BigDecimal,
+    x: &BigDecimal,
+    consts: &mut Consts,
+) -> Result<BigDecimal, ExpressionError> {
+    if x.is_zero() && y.is_zero() {
+        return Err(ExpressionError::DomainError {
+            op: "atan2".into(),
+            value: "0,0".into(),
+        });
+    }
+    if x.is_zero() {
+        // y != 0 here. Result is ±90°.
+        let sign = if y.is_negative() { -1 } else { 1 };
+        return Ok(BigDecimal::from(sign * 90));
+    }
+    // Compute atan(y/x) (degrees).
+    let ratio = y / x;
+    let principal = atan_bd(&ratio, consts)?;
+    if !x.is_negative() {
+        // x > 0: principal value already correct.
+        return Ok(principal);
+    }
+    // x < 0: shift by ±180° depending on sign of y.
+    if y.is_negative() {
+        Ok(principal - BigDecimal::from(180))
+    } else {
+        // y >= 0 here. y == 0 was handled above (x.is_zero false / y.is_zero true means
+        // x != 0, y == 0 → we want 180° if x < 0, 0° if x > 0 — covered by principal+180).
+        Ok(principal + BigDecimal::from(180))
+    }
+}
+
+fn hypot_bd(
+    x: &BigDecimal,
+    y: &BigDecimal,
+    consts: &mut Consts,
+) -> Result<BigDecimal, ExpressionError> {
+    let sq = x * x + y * y;
+    sqrt_bd(&sq, consts)
+}
+
 // --------------------------------------------------------------------------- //
 //  Recursive-descent parser
 // --------------------------------------------------------------------------- //
@@ -278,11 +568,7 @@ struct Parser<'a, 'c, S: BuildHasher> {
 }
 
 impl<'a, 'c, S: BuildHasher> Parser<'a, 'c, S> {
-    fn new(
-        input: &str,
-        variables: &'a HashMap<String, String, S>,
-        consts: &'c mut Consts,
-    ) -> Self {
+    fn new(input: &str, variables: &'a HashMap<String, String, S>, consts: &'c mut Consts) -> Self {
         Self {
             input: input.chars().collect(),
             variables,
@@ -435,12 +721,13 @@ impl<'a, 'c, S: BuildHasher> Parser<'a, 'c, S> {
         if self.current_char() == Some('(') {
             self.pos += 1;
             self.paren_depth += 1;
-            let argument = self.parse_expression()?;
-            self.expect_close_paren()?;
+            let args = self.parse_call_arguments()?;
             self.paren_depth -= 1;
-            self.call_function(&name, &argument)
+            self.call_function(&name, &args)
         } else if let Some(value) = self.variables.get(&name) {
             BigDecimal::from_str(value).map_err(|_| ExpressionError::InvalidNumber(value.clone()))
+        } else if let Some(value) = lookup_constant(&name) {
+            Ok(value)
         } else if self.paren_depth > 0 && self.current_char().is_none() {
             // Unclosed paren wins over UNKNOWN_VARIABLE when we bailed out at
             // end-of-input inside an open parenthesis context — the caller
@@ -448,6 +735,31 @@ impl<'a, 'c, S: BuildHasher> Parser<'a, 'c, S> {
             Err(ExpressionError::ExpectedCloseParen { pos: self.pos })
         } else {
             Err(ExpressionError::UnknownVariable(name))
+        }
+    }
+
+    fn parse_call_arguments(&mut self) -> Result<Vec<BigDecimal>, ExpressionError> {
+        self.skip_whitespace();
+        if self.current_char() == Some(')') {
+            self.pos += 1;
+            return Ok(Vec::new());
+        }
+        let mut args = vec![self.parse_expression()?];
+        loop {
+            self.skip_whitespace();
+            match self.current_char() {
+                Some(',') => {
+                    self.pos += 1;
+                    args.push(self.parse_expression()?);
+                }
+                Some(')') => {
+                    self.pos += 1;
+                    return Ok(args);
+                }
+                Some(_) | None => {
+                    return Err(ExpressionError::ExpectedCloseParen { pos: self.pos });
+                }
+            }
         }
     }
 
@@ -463,18 +775,206 @@ impl<'a, 'c, S: BuildHasher> Parser<'a, 'c, S> {
     fn call_function(
         &mut self,
         name: &str,
-        arg: &BigDecimal,
+        args: &[BigDecimal],
     ) -> Result<BigDecimal, ExpressionError> {
         match name {
-            "sin" => sin_bd(arg, self.consts),
-            "cos" => cos_bd(arg, self.consts),
-            "tan" => tan_bd(arg, self.consts),
-            "log" => ln_bd(arg, self.consts),
-            "log10" => log10_bd(arg, self.consts),
-            "sqrt" => sqrt_bd(arg, self.consts),
-            "abs" => Ok(arg.abs()),
-            "ceil" => Ok(ceil(arg)),
-            "floor" => Ok(floor(arg)),
+            "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2" => {
+                self.dispatch_trig(name, args)
+            }
+            "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh" => {
+                self.dispatch_hyperbolic(name, args)
+            }
+            "exp" | "log" | "ln" | "log10" | "sqrt" | "cbrt" => self.dispatch_exp_log(name, args),
+            "abs" | "ceil" | "floor" | "round" | "trunc" | "sign" | "factorial" => {
+                Self::dispatch_round_sign(name, args)
+            }
+            "min" | "max" | "mod" | "hypot" | "pow" | "gcd" | "lcm" => {
+                self.dispatch_multi_arg(name, args)
+            }
+            _ => Err(ExpressionError::UnknownFunction(name.to_string())),
+        }
+    }
+
+    fn dispatch_trig(
+        &mut self,
+        name: &str,
+        args: &[BigDecimal],
+    ) -> Result<BigDecimal, ExpressionError> {
+        match name {
+            "sin" => {
+                check_arity_bd(args, 1, "sin")?;
+                sin_bd(&args[0], self.consts)
+            }
+            "cos" => {
+                check_arity_bd(args, 1, "cos")?;
+                cos_bd(&args[0], self.consts)
+            }
+            "tan" => {
+                check_arity_bd(args, 1, "tan")?;
+                tan_bd(&args[0], self.consts)
+            }
+            "asin" => {
+                check_arity_bd(args, 1, "asin")?;
+                asin_bd(&args[0], self.consts)
+            }
+            "acos" => {
+                check_arity_bd(args, 1, "acos")?;
+                acos_bd(&args[0], self.consts)
+            }
+            "atan" => {
+                check_arity_bd(args, 1, "atan")?;
+                atan_bd(&args[0], self.consts)
+            }
+            "atan2" => {
+                check_arity_bd(args, 2, "atan2")?;
+                atan2_bd(&args[0], &args[1], self.consts)
+            }
+            _ => Err(ExpressionError::UnknownFunction(name.to_string())),
+        }
+    }
+
+    fn dispatch_hyperbolic(
+        &mut self,
+        name: &str,
+        args: &[BigDecimal],
+    ) -> Result<BigDecimal, ExpressionError> {
+        match name {
+            "sinh" => {
+                check_arity_bd(args, 1, "sinh")?;
+                sinh_bd(&args[0], self.consts)
+            }
+            "cosh" => {
+                check_arity_bd(args, 1, "cosh")?;
+                cosh_bd(&args[0], self.consts)
+            }
+            "tanh" => {
+                check_arity_bd(args, 1, "tanh")?;
+                tanh_bd(&args[0], self.consts)
+            }
+            "asinh" => {
+                check_arity_bd(args, 1, "asinh")?;
+                asinh_bd(&args[0], self.consts)
+            }
+            "acosh" => {
+                check_arity_bd(args, 1, "acosh")?;
+                acosh_bd(&args[0], self.consts)
+            }
+            "atanh" => {
+                check_arity_bd(args, 1, "atanh")?;
+                atanh_bd(&args[0], self.consts)
+            }
+            _ => Err(ExpressionError::UnknownFunction(name.to_string())),
+        }
+    }
+
+    fn dispatch_exp_log(
+        &mut self,
+        name: &str,
+        args: &[BigDecimal],
+    ) -> Result<BigDecimal, ExpressionError> {
+        match name {
+            "exp" => {
+                check_arity_bd(args, 1, "exp")?;
+                exp_bd(&args[0], self.consts)
+            }
+            "log" | "ln" => {
+                check_arity_bd(args, 1, name)?;
+                ln_bd(&args[0], self.consts)
+            }
+            "log10" => {
+                check_arity_bd(args, 1, "log10")?;
+                log10_bd(&args[0], self.consts)
+            }
+            "sqrt" => {
+                check_arity_bd(args, 1, "sqrt")?;
+                sqrt_bd(&args[0], self.consts)
+            }
+            "cbrt" => {
+                check_arity_bd(args, 1, "cbrt")?;
+                cbrt_bd(&args[0], self.consts)
+            }
+            _ => Err(ExpressionError::UnknownFunction(name.to_string())),
+        }
+    }
+
+    fn dispatch_round_sign(name: &str, args: &[BigDecimal]) -> Result<BigDecimal, ExpressionError> {
+        match name {
+            "abs" => {
+                check_arity_bd(args, 1, "abs")?;
+                Ok(args[0].abs())
+            }
+            "ceil" => {
+                check_arity_bd(args, 1, "ceil")?;
+                Ok(ceil(&args[0]))
+            }
+            "floor" => {
+                check_arity_bd(args, 1, "floor")?;
+                Ok(floor(&args[0]))
+            }
+            "round" => {
+                check_arity_bd(args, 1, "round")?;
+                Ok(round_bd(&args[0]))
+            }
+            "trunc" => {
+                check_arity_bd(args, 1, "trunc")?;
+                Ok(trunc_bd(&args[0]))
+            }
+            "sign" => {
+                check_arity_bd(args, 1, "sign")?;
+                Ok(sign_bd(&args[0]))
+            }
+            "factorial" => {
+                check_arity_bd(args, 1, "factorial")?;
+                factorial_bd(&args[0])
+            }
+            _ => Err(ExpressionError::UnknownFunction(name.to_string())),
+        }
+    }
+
+    fn dispatch_multi_arg(
+        &mut self,
+        name: &str,
+        args: &[BigDecimal],
+    ) -> Result<BigDecimal, ExpressionError> {
+        match name {
+            "min" => {
+                if args.is_empty() {
+                    return Err(ExpressionError::DomainError {
+                        op: "min".into(),
+                        value: "arity=0, expected>=1".into(),
+                    });
+                }
+                Ok(args.iter().min().cloned().unwrap_or_else(BigDecimal::zero))
+            }
+            "max" => {
+                if args.is_empty() {
+                    return Err(ExpressionError::DomainError {
+                        op: "max".into(),
+                        value: "arity=0, expected>=1".into(),
+                    });
+                }
+                Ok(args.iter().max().cloned().unwrap_or_else(BigDecimal::zero))
+            }
+            "mod" => {
+                check_arity_bd(args, 2, "mod")?;
+                modulo(&args[0], &args[1])
+            }
+            "hypot" => {
+                check_arity_bd(args, 2, "hypot")?;
+                hypot_bd(&args[0], &args[1], self.consts)
+            }
+            "pow" => {
+                check_arity_bd(args, 2, "pow")?;
+                power(&args[0], &args[1], self.consts)
+            }
+            "gcd" => {
+                check_arity_bd(args, 2, "gcd")?;
+                integer_binop_bd(&args[0], &args[1], "gcd", gcd_u64)
+            }
+            "lcm" => {
+                check_arity_bd(args, 2, "lcm")?;
+                integer_binop_bd(&args[0], &args[1], "lcm", lcm_u64)
+            }
             _ => Err(ExpressionError::UnknownFunction(name.to_string())),
         }
     }
@@ -509,12 +1009,18 @@ mod tests {
 
     #[test]
     fn division_by_zero_is_error() {
-        assert_eq!(evaluate("1/0").unwrap_err(), ExpressionError::DivisionByZero);
+        assert_eq!(
+            evaluate("1/0").unwrap_err(),
+            ExpressionError::DivisionByZero
+        );
     }
 
     #[test]
     fn modulo_by_zero_is_error() {
-        assert_eq!(evaluate("5 % 0").unwrap_err(), ExpressionError::DivisionByZero);
+        assert_eq!(
+            evaluate("5 % 0").unwrap_err(),
+            ExpressionError::DivisionByZero
+        );
     }
 
     #[test]
@@ -550,10 +1056,7 @@ mod tests {
     #[test]
     fn long_decimal_variable_preserved() {
         let mut vars = HashMap::new();
-        vars.insert(
-            "pi".to_string(),
-            "3.1415926535897932384626433".to_string(),
-        );
+        vars.insert("pi".to_string(), "3.1415926535897932384626433".to_string());
         let out = evaluate_with_variables("pi * 2", &vars).unwrap();
         assert_eq!(out, "6.2831853071795864769252866");
     }
@@ -662,5 +1165,136 @@ mod tests {
         // Whitespace must still be valid as a token separator.
         assert_eq!(evaluate("  1  +  2  ").unwrap(), "3");
         assert_eq!(evaluate("sqrt( 4 )").unwrap(), "2");
+    }
+
+    // ---- new constants ----
+
+    #[test]
+    fn const_pi_exact_truncated() {
+        let out = evaluate("pi").unwrap();
+        assert!(out.starts_with("3.14159265358979323846"), "got {out}");
+    }
+
+    #[test]
+    fn const_e_exact_truncated() {
+        let out = evaluate("e").unwrap();
+        assert!(out.starts_with("2.71828182845904523536"), "got {out}");
+    }
+
+    #[test]
+    fn const_tau_is_two_pi() {
+        let out = evaluate("tau").unwrap();
+        assert!(out.starts_with("6.28318530717958647692"), "got {out}");
+    }
+
+    #[test]
+    fn const_phi_golden_ratio() {
+        let out = evaluate("phi").unwrap();
+        assert!(out.starts_with("1.61803398874989484820"), "got {out}");
+    }
+
+    // ---- new functions ----
+
+    #[test]
+    fn fn_exp_zero_is_one() {
+        let out = evaluate("exp(0)").unwrap();
+        assert!(out == "1" || out.starts_with("1.0"), "got {out}");
+    }
+
+    #[test]
+    fn fn_exp_one_is_e() {
+        let out = evaluate("exp(1)").unwrap();
+        assert!(out.starts_with("2.71828"), "got {out}");
+    }
+
+    #[test]
+    fn fn_ln_alias() {
+        let out = evaluate("ln(e)").unwrap();
+        assert!(out == "1" || out.starts_with("1.000000") || out.starts_with("0.99999"));
+    }
+
+    #[test]
+    fn fn_inverse_trig_returns_degrees() {
+        let asin = evaluate("asin(1)").unwrap();
+        assert!(asin.starts_with("90"), "got {asin}");
+        let acos = evaluate("acos(0)").unwrap();
+        assert!(acos.starts_with("90"), "got {acos}");
+        let atan = evaluate("atan(1)").unwrap();
+        assert!(atan.starts_with("45"), "got {atan}");
+    }
+
+    #[test]
+    fn fn_atan2_quadrants() {
+        let q1 = evaluate("atan2(1, 1)").unwrap();
+        assert!(q1.starts_with("45"), "got {q1}");
+        let q2 = evaluate("atan2(1, -1)").unwrap();
+        assert!(q2.starts_with("135"), "got {q2}");
+    }
+
+    #[test]
+    fn fn_hyperbolic_zero() {
+        assert_eq!(evaluate("sinh(0)").unwrap(), "0");
+        let c = evaluate("cosh(0)").unwrap();
+        assert!(c == "1" || c.starts_with("1.000"), "got {c}");
+        assert_eq!(evaluate("tanh(0)").unwrap(), "0");
+    }
+
+    #[test]
+    fn fn_round_trunc_sign_exact() {
+        assert_eq!(evaluate("round(2.5)").unwrap(), "3");
+        assert_eq!(evaluate("trunc(3.9)").unwrap(), "3");
+        assert_eq!(evaluate("trunc(-3.9)").unwrap(), "-3");
+        assert_eq!(evaluate("sign(-7)").unwrap(), "-1");
+        assert_eq!(evaluate("sign(0)").unwrap(), "0");
+        assert_eq!(evaluate("sign(5)").unwrap(), "1");
+    }
+
+    #[test]
+    fn fn_factorial_exact_arbitrary_precision() {
+        assert_eq!(evaluate("factorial(0)").unwrap(), "1");
+        assert_eq!(evaluate("factorial(20)").unwrap(), "2432902008176640000");
+        // 25! easily exceeds f64; exact mode handles it.
+        assert_eq!(
+            evaluate("factorial(25)").unwrap(),
+            "15511210043330985984000000"
+        );
+    }
+
+    #[test]
+    fn fn_min_max_pick_extremes() {
+        assert_eq!(evaluate("min(3, 1, 2)").unwrap(), "1");
+        assert_eq!(evaluate("max(3, 1, 2)").unwrap(), "3");
+    }
+
+    #[test]
+    fn fn_gcd_lcm_exact() {
+        assert_eq!(evaluate("gcd(12, 18)").unwrap(), "6");
+        assert_eq!(evaluate("lcm(4, 6)").unwrap(), "12");
+    }
+
+    #[test]
+    fn fn_hypot_exact_pythagorean_triple() {
+        assert_eq!(evaluate("hypot(3, 4)").unwrap(), "5");
+    }
+
+    #[test]
+    fn fn_pow_two_args_exact() {
+        assert_eq!(evaluate("pow(2, 10)").unwrap(), "1024");
+        assert_eq!(evaluate("pow(1.5, 2)").unwrap(), "2.25");
+    }
+
+    #[test]
+    fn fn_arity_mismatch_is_domain_error() {
+        assert!(matches!(
+            evaluate("sin(1, 2)").unwrap_err(),
+            ExpressionError::DomainError { .. }
+        ));
+    }
+
+    #[test]
+    fn variable_shadows_constant() {
+        let mut vars = HashMap::new();
+        vars.insert("pi".to_string(), "3".to_string());
+        assert_eq!(evaluate_with_variables("pi", &vars).unwrap(), "3");
     }
 }

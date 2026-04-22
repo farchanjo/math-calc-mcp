@@ -1,6 +1,6 @@
 # API Usage & Integration
 
-How to wire arithma into an MCP client and call its 87 tools from code or an LLM.
+How to wire arithma into an MCP client and call its 173 tools from code or an LLM.
 
 ## Integration
 
@@ -35,7 +35,7 @@ Same stdio interface. Point the client's MCP config at the binary path.
  sleep 0.3) | /absolute/path/to/arithma 2>/dev/null | jq .
 ```
 
-`tools/list` must enumerate all 87 tools.
+`tools/list` must enumerate all 173 tools.
 
 ## Tool-calling convention
 

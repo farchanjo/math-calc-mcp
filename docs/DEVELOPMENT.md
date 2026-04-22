@@ -35,8 +35,8 @@ RUSTFLAGS="-C lto=fat -C codegen-units=1 -C strip=symbols" cargo build --release
 
 | Scope | Command | Coverage |
 |:---|:---|:---|
-| Unit | `cargo test --lib` | 349 tests — parsers, units, helpers, each tool. |
-| Stdio integration | `python3 scripts/test_stdio.py` | All 87 tools via full JSON-RPC round trips. |
+| Unit | `cargo test --lib` | 690 tests — parsers, units, helpers, each tool. |
+| Stdio integration | `python3 scripts/test_stdio.py` | All 173 tools across 23 categories (234 assertions). |
 | Full suite | `cargo test --all` | Unit + doctests. |
 | Single tool module | `cargo test --lib unit_converter::tests` | |
 | Single test | `cargo test --lib convert_length` | |
@@ -77,14 +77,14 @@ Everything must pass. If a step fails, fix the root cause — do not bypass.
 ├── src/
 │   ├── main.rs                    Binary entry, stdio transport
 │   ├── lib.rs                     Library exports
-│   ├── server.rs                  #[tool_router] — all 87 tools
+│   ├── server.rs                  #[tool_router] — all 173 tools
 │   ├── engine/
 │   │   ├── expression.rs          Parser + f64 evaluator
 │   │   ├── expression_exact.rs    Parser + 128-bit evaluator
 │   │   ├── unit_registry.rs       21 categories, 118 units
 │   │   └── bigdecimal_ext.rs      DECIMAL128 context, formatters
 │   ├── mcp/                       MCP message helpers
-│   └── tools/                     15 category modules
+│   └── tools/                     23 category modules
 │       ├── basic.rs
 │       ├── scientific.rs
 │       ├── programmable.rs
@@ -99,8 +99,16 @@ Everything must pass. If a step fails, fix the root cause — do not bypass.
 │       ├── graphing.rs
 │       ├── network.rs
 │       ├── analog_electronics.rs
-│       └── digital_electronics.rs
-├── scripts/test_stdio.py          Integration test (87 tools)
+│       ├── digital_electronics.rs
+│       ├── statistics.rs
+│       ├── combinatorics.rs
+│       ├── geometry.rs
+│       ├── complex.rs
+│       ├── crypto.rs
+│       ├── matrices.rs
+│       ├── physics.rs
+│       └── chemistry.rs
+├── scripts/test_stdio.py          Integration test (234 assertions, 173 tools)
 ├── docs/                          INDEX · ARCHITECTURE · TOOLS · DEVELOPMENT · API
 └── target/release/arithma         Final binary
 ```

@@ -1,4 +1,3 @@
-
 //!
 //! Behavioral parity:
 //! * Arithmetic is exact, backed by `bigdecimal::BigDecimal`.
@@ -24,7 +23,7 @@ const DISPLAY_SCALE: i64 = 2;
 const DIVISION_SCALE: i64 = 20;
 
 /// Run a sequence of operations and return the tape envelope.
-#[must_use] 
+#[must_use]
 pub fn calculate_with_tape(operations_json: &str) -> String {
     if operations_json.trim().is_empty() {
         return error(
@@ -359,8 +358,12 @@ mod tests {
 
     #[test]
     fn err_not_a_json_array() {
-        let expected = "CALCULATE_WITH_TAPE: ERROR\nREASON: [PARSE_ERROR] operations must be a JSON array";
-        assert_eq!(calculate_with_tape("{\"op\":\"+\",\"value\":\"1\"}"), expected);
+        let expected =
+            "CALCULATE_WITH_TAPE: ERROR\nREASON: [PARSE_ERROR] operations must be a JSON array";
+        assert_eq!(
+            calculate_with_tape("{\"op\":\"+\",\"value\":\"1\"}"),
+            expected
+        );
         assert_eq!(calculate_with_tape("garbage"), expected);
     }
 

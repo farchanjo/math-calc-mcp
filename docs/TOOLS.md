@@ -1,8 +1,8 @@
-# Tools Catalog — 87 tools, 15 categories
+# Tools Catalog — 173 tools, 23 categories
 
 Every tool is a stateless function whose response is a compact, line-oriented envelope built by `src/mcp/message/builder.rs`. Numeric parameters are passed as **strings** to preserve arbitrary precision.
 
-> **Total**: 87 tools — 7 + 7 + 4 + 4 + 6 + 4 + 2 + 3 + 4 + 5 + 1 + 3 + 13 + 14 + 10.
+> **Total**: 173 tools — original 87 plus 86 across 8 new domains (statistics, combinatorics, geometry, complex numbers, crypto/encoding, matrices, physics, chemistry).
 
 ## Response format
 
@@ -36,6 +36,14 @@ Tool names in responses use `SCREAMING_SNAKE_CASE` (e.g. `SUBNET_CALCULATOR`, `E
 | 13 | Networking | 13 | [↓](#networking-13) |
 | 14 | Analog electronics | 14 | [↓](#analog-electronics-14) |
 | 15 | Digital electronics | 10 | [↓](#digital-electronics-10) |
+| 16 | Statistics | 16 | [↓](#statistics-16) |
+| 17 | Combinatorics & number theory | 7 | [↓](#combinatorics--number-theory-7) |
+| 18 | Geometry | 12 | [↓](#geometry-12) |
+| 19 | Complex numbers | 10 | [↓](#complex-numbers-10) |
+| 20 | Crypto & encoding | 10 | [↓](#crypto--encoding-10) |
+| 21 | Matrices | 10 | [↓](#matrices-10) |
+| 22 | Physics | 12 | [↓](#physics-12) |
+| 23 | Chemistry | 9 | [↓](#chemistry-9) |
 
 ---
 
@@ -79,9 +87,19 @@ Parse-and-evaluate any expression with full operator support. `variables` is a *
 | `evaluateExactWithVariables` | `expression`, `variables` | `EVALUATE_EXACT_WITH_VARIABLES: OK \| RESULT: <128-bit>` |
 
 **Operators**: `+ - * / ^ %` and parentheses.
-**Built-ins**: `sin`, `cos`, `tan`, `log`, `log10`, `sqrt`, `abs`, `ceil`, `floor`.
 
-Common errors: `UNKNOWN_VARIABLE` (e.g. `DETAIL: name=foo`), `UNKNOWN_FUNCTION`, `DIVISION_BY_ZERO`, `PARSE_ERROR`.
+**Constants**: `pi`, `e`, `tau`, `phi` (recognised when used as a bare identifier; variable bindings shadow the built-in).
+
+**Functions** (both `evaluate` and `evaluateExact` share the same surface):
+
+- Trigonometric (degrees in, degrees out for inverses): `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2(y, x)`.
+- Hyperbolic (radians): `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`.
+- Exponential / log: `exp`, `log` (alias `ln`), `log10`, `log2`.
+- Roots and rounding: `sqrt`, `cbrt`, `abs`, `ceil`, `floor`, `round`, `trunc`, `sign`.
+- Multi-arg: `min(a, b, …)`, `max(a, b, …)`, `mod(a, b)`, `hypot(x, y)`, `pow(base, exp)`, `gcd(a, b)`, `lcm(a, b)`.
+- Combinatorial: `factorial(n)`.
+
+Common errors: `UNKNOWN_VARIABLE` (e.g. `DETAIL: name=foo`), `UNKNOWN_FUNCTION`, `DIVISION_BY_ZERO`, `PARSE_ERROR`, `DOMAIN_ERROR` (e.g. `asin(2)`, `atanh(±1)`, arity mismatch).
 
 ## Vectors & arrays (4)
 
@@ -240,13 +258,156 @@ Bit-level operations, ADC/DAC, timers.
 | `frequencyPeriod` | `FREQUENCY_PERIOD: OK \| RESULT: …` — `freqToPeriod` / `periodToFreq`. |
 | `nyquistRate` | `NYQUIST_RATE: OK \| RESULT: <min sample rate>`. |
 
+## Statistics (16)
+
+Descriptive stats, distributions, and regression. Values are comma-separated decimals.
+
+| Tool | Inputs | Response |
+|:---|:---|:---|
+| `mean` | values | `MEAN: OK \| RESULT: …` |
+| `median` | values | `MEDIAN: OK \| RESULT: …` |
+| `mode` | values | `MODE: OK \| MODES: v1,v2 \| COUNT: n` — multi-modal output when ties exist |
+| `variance` | values, population (bool) | `VARIANCE: OK \| RESULT: …` — sample (`n-1`) or population (`n`) |
+| `stdDev` | values, population | `STDDEV: OK \| RESULT: …` |
+| `percentile` | values, p (0–100) | Linear-interpolated (R-7 / Excel definition) |
+| `quartile` | values, q (1–3) | `QUARTILE: OK \| Q: n \| VALUE: …` |
+| `iqr` | values | `IQR: OK \| Q1: … \| Q3: … \| IQR: …` |
+| `correlation` | xValues, yValues | Pearson coefficient |
+| `covariance` | xValues, yValues, population | |
+| `linearRegression` | xValues, yValues | `LINEAR_REGRESSION: OK \| SLOPE \| INTERCEPT \| R \| R_SQUARED` |
+| `normalPdf` | x, mean, stdDev | `NORMAL_PDF: OK \| RESULT: …` |
+| `normalCdf` | x, mean, stdDev | erf-approximated (max error ~1.5e-7) |
+| `tTestOneSample` | values, hypothesizedMean | `T_TEST: OK \| T \| DF \| MEAN \| SE` |
+| `binomialPmf` | n, k, p | Capped at n=1000 for numerical safety |
+| `confidenceInterval` | values, confidenceLevel (0–1) | `CONFIDENCE_INTERVAL: OK \| MEAN \| LOWER \| UPPER \| MARGIN` — normal (z-score) |
+
+## Combinatorics & number theory (7)
+
+Exact arbitrary-precision integer arithmetic via `num-bigint`.
+
+| Tool | Inputs | Example |
+|:---|:---|:---|
+| `combination` | n, k | `COMBINATION: OK \| RESULT: 126410606437752` (C(50,25)) |
+| `permutation` | n, k | `PERMUTATION: OK \| RESULT: 720` (P(10,3)) |
+| `fibonacci` | n | `FIBONACCI: OK \| RESULT: 354224848179261915075` (F(100)); capped at n=50000 |
+| `isPrime` | n | `IS_PRIME: OK \| N: … \| IS_PRIME: true \| false` |
+| `nextPrime` | n | Smallest prime strictly greater than n |
+| `primeFactors` | n | `PRIME_FACTORS: OK \| N: … \| FACTORS: 2,2,3 \| COUNT: 3` — n ≤ 10^12 |
+| `eulerTotient` | n | Count of integers in [1, n] coprime to n |
+
+## Geometry (12)
+
+Areas, volumes, distances for common shapes. Radii/lengths must be positive.
+
+| Tool | Inputs | Response |
+|:---|:---|:---|
+| `circleArea` | radius | `CIRCLE_AREA: OK \| RESULT: π·r²` |
+| `circlePerimeter` | radius | `CIRCLE_PERIMETER: OK \| RESULT: 2π·r` |
+| `sphereVolume` | radius | `4π·r³/3` |
+| `sphereArea` | radius | `4π·r²` |
+| `triangleArea` | sides=`"a,b,c"` | Heron's formula; inequality violation errors |
+| `polygonArea` | coordinates=`"x1,y1,x2,y2,…"` | Shoelace formula; `POLYGON_AREA: OK \| AREA: … \| VERTICES: n` |
+| `coneVolume` | radius, height | `π·r²·h/3` |
+| `cylinderVolume` | radius, height | `π·r²·h` |
+| `distance2D` | p1=`"x,y"`, p2 | `DISTANCE_2D: OK \| RESULT: …` |
+| `distance3D` | p1=`"x,y,z"`, p2 | `DISTANCE_3D: OK \| RESULT: …` |
+| `regularPolygon` | sides (≥3), sideLength | `REGULAR_POLYGON: OK \| AREA \| PERIMETER \| APOTHEM \| CIRCUMRADIUS` |
+| `pointToLineDistance` | point, lineP1, lineP2 (2D) | Perpendicular distance |
+
+## Complex numbers (10)
+
+Rectangular form `real,imag` CSV. Polar conversions use **degrees** to match trig conventions.
+
+| Tool | Inputs | Response |
+|:---|:---|:---|
+| `complexAdd` | a, b | `COMPLEX_ADD: OK \| REAL \| IMAG` |
+| `complexMult` | a, b | `COMPLEX_MULT: OK \| REAL \| IMAG` |
+| `complexDiv` | a, b | `COMPLEX_DIV: OK \| REAL \| IMAG` — errors with `DIVISION_BY_ZERO` on complex zero |
+| `complexConjugate` | z | Flips sign of imaginary part |
+| `complexPower` | z, exponent | De Moivre: `r^n·(cos nθ + i sin nθ)` |
+| `complexMagnitude` | z | Scalar — `\|z\| = √(re²+im²)` |
+| `complexPhase` | z | Degrees, range (-180, 180] |
+| `polarToRect` | magnitude, angleDegrees | `POLAR_TO_RECT: OK \| REAL \| IMAG` |
+| `rectToPolar` | z | `RECT_TO_POLAR: OK \| MAGNITUDE \| ANGLE_DEG` |
+| `complexSqrt` | z | Principal square root |
+
+## Crypto & encoding (10)
+
+Pure-Rust `RustCrypto` + helpers. UTF-8 in, UTF-8 / hex out.
+
+| Tool | Inputs | Response |
+|:---|:---|:---|
+| `hashMd5` | input | Hex digest |
+| `hashSha1` | input | Hex digest |
+| `hashSha256` | input | Hex digest |
+| `hashSha512` | input | Hex digest |
+| `base64Encode` | input | Standard alphabet |
+| `base64Decode` | input | Errors on invalid b64 or non-UTF-8 bytes |
+| `urlEncode` | input | Percent-encoded |
+| `urlDecode` | input | |
+| `hexEncode` | input | Lowercase hex |
+| `crc32` | input | `CRC32: OK \| DECIMAL \| HEX` (IEEE CRC-32) |
+
+## Matrices (10)
+
+Matrices are passed as row-major strings: rows separated by `;`, cells by `,` (e.g. `"1,2;3,4"`).
+
+| Tool | Inputs | Response |
+|:---|:---|:---|
+| `matrixAdd` | a, b | `MATRIX_ADD: OK \| DIM \| MATRIX: <row-major>` |
+| `matrixMultiply` | a, b | Requires `a.cols == b.rows` |
+| `matrixTranspose` | a | Swaps rows and columns |
+| `matrixDeterminant` | a (square) | Partial-pivoted Gaussian elimination |
+| `matrixInverse` | a (invertible) | Gauss-Jordan; singular → `DOMAIN_ERROR` |
+| `matrixTrace` | a (square) | Sum of diagonal entries |
+| `matrixRank` | a | Gauss-Jordan with ε=1e-9 pivot threshold |
+| `matrixEigenvalues2x2` | 2x2 matrix | `KIND: real \| LAMBDA1 \| LAMBDA2` — or `KIND: complex` with `re,im` pairs |
+| `crossProduct` | a=`"x,y,z"`, b | 3D cross product |
+| `gaussianElimination` | augmented `[A\|b]` (N rows × N+1 cols) | `GAUSSIAN_ELIMINATION: OK \| N \| SOLUTION` |
+
+## Physics (12)
+
+Classical physics formulas. SI units except where noted.
+
+| Tool | Inputs | Response |
+|:---|:---|:---|
+| `kinematics` | initialVelocity, acceleration, time | `FINAL_VELOCITY \| DISPLACEMENT` |
+| `projectileMotion` | speed, angleDegrees, gravity | `RANGE \| PEAK_HEIGHT \| TIME_OF_FLIGHT` (no air resistance) |
+| `newtonsForce` | mass, acceleration | `F = m·a` |
+| `gravitationalForce` | m1, m2, distance | `F = G·m1·m2/r²` (`G = 6.674e-11`) |
+| `dopplerEffect` | sourceFreq, soundSpeed, sourceVelocity, observerVelocity | Classical (non-relativistic) |
+| `waveLength` | frequency, waveSpeed | `λ = waveSpeed/f` |
+| `planckEnergy` | frequency | `E = h·f` (`h = 6.626e-34`) |
+| `idealGasLaw` | pressure, volume, moles, temperature, solveFor (P\|V\|n\|T) | Solves for the unknown |
+| `heatTransfer` | thermalConductivity, area, deltaTemp, thickness | Fourier's law `Q = kAΔT/L` |
+| `stefanBoltzmann` | emissivity (0–1), area, temperatureK | `P = σεAT⁴` |
+| `escapeVelocity` | mass, radius | `v = √(2GM/r)` |
+| `orbitalVelocity` | mass, radius | `v = √(GM/r)` |
+
+## Chemistry (9)
+
+Stoichiometry, pH, concentration, decay.
+
+| Tool | Inputs | Response |
+|:---|:---|:---|
+| `molarMass` | formula (e.g. `H2O`, `Ca(OH)2`, `Fe2(SO4)3`) | `MOLAR_MASS: OK \| FORMULA \| MOLAR_MASS_G_MOL \| BREAKDOWN` — nested parens supported |
+| `ph` | hConcentration (mol/L) | `pH = -log10([H+])` |
+| `poh` | ohConcentration | `pOH = -log10([OH-])` |
+| `molarity` | moles, volumeLitres | mol/L |
+| `molality` | moles, kilogramsSolvent | mol/kg |
+| `hendersonHasselbalch` | pka, conjugateBase, weakAcid | `pH = pKa + log10([A⁻]/[HA])` |
+| `halfLife` | decayConstant | `t½ = ln(2)/λ` |
+| `decayConstant` | halfLife | `λ = ln(2)/t½` |
+| `idealGasMoles` | pressurePa, volumeM3, temperatureK | `n = PV/(RT)` |
+
 ---
 
 ## Summary
 
-- **87 tools** across **15 categories**.
+- **173 tools** across **23 categories** (original 87 plus 86 across 8 new domains).
 - Every response is a single string in arithma's line-oriented envelope: `TOOL: OK | …` on success, `TOOL: ERROR\nREASON: [CODE] …` on failure.
-- Arbitrary precision where it matters (arithmetic, finance, unit conversion).
+- Arbitrary precision where it matters (arithmetic, finance, unit conversion, combinatorics).
 - Stateless — safe to fan out concurrent calls.
+- Pure Rust — zero C dependencies, single static binary.
 
 See [API.md](./API.md) for wire-level JSON-RPC examples.

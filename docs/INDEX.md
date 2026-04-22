@@ -1,6 +1,6 @@
 # arithma Documentation
 
-**The Ultimate LLM Calculator Engine** — 87 precision math tools exposed over [MCP](https://modelcontextprotocol.io).
+**The Ultimate LLM Calculator Engine** — 173 precision math tools exposed over [MCP](https://modelcontextprotocol.io).
 
 ## Navigation
 
@@ -13,14 +13,15 @@
 
 ## What is arithma?
 
-A pure-Rust MCP server that delivers **87 expert-grade calculators** to any LLM-capable client. Built for precision and portability:
+A pure-Rust MCP server that delivers **173 expert-grade calculators** across **23 categories** to any LLM-capable client. Built for precision and portability:
 
 - **Arbitrary precision** — `BigDecimal` with DECIMAL128 semantics (34 digits, HALF_UP).
-- **128-bit transcendentals** — correctly-rounded `sin`/`cos`/`tan`/`log` via `astro-float`.
-- **Zero C deps** — single ~3 MB static binary, identical on Linux, macOS, and Windows.
+- **128-bit transcendentals** — correctly-rounded `sin`/`cos`/`tan`/`log`/`exp`/`asin`/`atan`/hyperbolics via `astro-float`.
+- **Built-in constants** — `pi`, `e`, `tau`, `phi` in the `evaluate` and `evaluateExact` expressions.
+- **Zero C deps** — single static binary, identical on Linux, macOS, and Windows.
 - **Portable SIMD** — runtime dispatch via `wide` (SSE2 / AVX2 / AVX-512 / NEON).
 - **Stateless & fast** — sub-second startup, millisecond-scale tool latency, safe to fan out.
-- **Tested** — 434 tests (349 unit + 87 stdio integration), full suite runs in under a second.
+- **Tested** — 924 tests (690 unit + 234 stdio integration), full suite runs in under a second.
 - **LLM-friendly wire format** — `TOOL: OK | KEY: value | …` on success, `TOOL: ERROR\nREASON: [CODE] …` on failure. No JSON parsing required on the client side.
 
 ## I want to…

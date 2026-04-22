@@ -8,14 +8,14 @@
 use rmcp::{
     ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{ServerInfo, ServerCapabilities, ProtocolVersion, Implementation},
+    model::{Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
     schemars, tool, tool_handler, tool_router,
 };
 
 use crate::tools::{
-    analog_electronics, basic, calculus, cooking, datetime, digital_electronics, financial,
-    graphing, measure_reference, network, printing, programmable, scientific, unit_converter,
-    vector,
+    analog_electronics, basic, calculus, chemistry, combinatorics, complex, cooking, crypto,
+    datetime, digital_electronics, financial, geometry, graphing, matrices, measure_reference,
+    network, physics, printing, programmable, scientific, statistics, unit_converter, vector,
 };
 
 #[derive(Clone)]
@@ -671,6 +671,359 @@ pub struct NyquistParams {
     pub bandwidth_hz: String,
 }
 
+// ---- statistics ---- //
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ValuesParams {
+    /// Comma-separated list of finite decimal numbers.
+    pub values: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ValuesPopulationParams {
+    /// Comma-separated list of finite decimal numbers.
+    pub values: String,
+    /// `true` for population statistic (n denominator); `false` for sample (n-1).
+    pub population: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PercentileParams {
+    /// Comma-separated list of finite decimal numbers.
+    pub values: String,
+    /// Percentile in [0, 100].
+    pub p: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct QuartileParams {
+    /// Comma-separated list of finite decimal numbers.
+    pub values: String,
+    /// Quartile index: 1, 2, or 3.
+    pub q: i32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TwoSeriesParams {
+    /// Comma-separated x values.
+    pub x_values: String,
+    /// Comma-separated y values (same length as `xValues`).
+    pub y_values: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CovarianceParams {
+    pub x_values: String,
+    pub y_values: String,
+    pub population: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NormalDistParams {
+    pub x: String,
+    pub mean: String,
+    pub std_dev: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TTestParams {
+    pub values: String,
+    pub hypothesized_mean: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct BinomialPmfParams {
+    /// Number of trials (n >= 0).
+    pub n: i64,
+    /// Successes count in [0, n].
+    pub k: i64,
+    /// Success probability in [0, 1].
+    pub p: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfidenceIntervalParams {
+    pub values: String,
+    /// Confidence level in (0, 1) — e.g. 0.95.
+    pub confidence_level: String,
+}
+
+// ---- combinatorics ---- //
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct NchooseKParams {
+    pub n: i64,
+    pub k: i64,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SingleIntegerParams {
+    pub n: i64,
+}
+
+// ---- geometry ---- //
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RadiusParams {
+    pub radius: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct TriangleSidesParams {
+    /// Three comma-separated side lengths "a,b,c".
+    pub sides: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PolygonCoordsParams {
+    /// Vertex coordinates "x1,y1,x2,y2,..." (at least 3 vertices).
+    pub coordinates: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RadiusHeightParams {
+    pub radius: String,
+    pub height: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct TwoPointsParams {
+    /// Coordinates of point 1 (CSV: "x,y" or "x,y,z").
+    pub p1: String,
+    /// Coordinates of point 2 (same dimension as `p1`).
+    pub p2: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RegularPolygonParams {
+    /// Number of sides (>= 3).
+    pub sides: i32,
+    pub side_length: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PointToLineParams {
+    pub point: String,
+    pub line_p1: String,
+    pub line_p2: String,
+}
+
+// ---- complex numbers ---- //
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ComplexBinaryParams {
+    /// First complex number "real,imag".
+    pub a: String,
+    /// Second complex number "real,imag".
+    pub b: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ComplexUnaryParams {
+    /// Complex number "real,imag".
+    pub z: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ComplexPowerParams {
+    pub z: String,
+    pub exponent: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PolarToRectParams {
+    pub magnitude: String,
+    pub angle_degrees: String,
+}
+
+// ---- crypto / encoding ---- //
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct StringInputParams {
+    /// UTF-8 input text.
+    pub input: String,
+}
+
+// ---- matrices ---- //
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct MatrixParams {
+    /// Matrix in row-major form: rows separated by `;`, cells by `,`.
+    pub a: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct MatrixBinaryParams {
+    pub a: String,
+    pub b: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GaussianEliminationParams {
+    /// Augmented matrix [A | b] in row-major form (same `;`/`,` syntax).
+    pub coefficients: String,
+}
+
+// ---- physics ---- //
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct KinematicsParams {
+    pub initial_velocity: String,
+    pub acceleration: String,
+    pub time: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectileParams {
+    pub speed: String,
+    pub angle_degrees: String,
+    /// Gravitational acceleration in m/s² (Earth ≈ 9.81).
+    pub gravity: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct MassAccelParams {
+    pub mass: String,
+    pub acceleration: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GravitationalForceParams {
+    pub m1: String,
+    pub m2: String,
+    pub distance: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DopplerParams {
+    pub source_freq: String,
+    pub sound_speed: String,
+    pub source_velocity: String,
+    pub observer_velocity: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WaveLengthParams {
+    pub frequency: String,
+    pub wave_speed: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct FrequencyParams {
+    pub frequency: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IdealGasLawParams {
+    pub pressure: String,
+    pub volume: String,
+    pub moles: String,
+    pub temperature: String,
+    /// One of "P", "V", "n", "T".
+    pub solve_for: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HeatTransferParams {
+    pub thermal_conductivity: String,
+    pub area: String,
+    pub delta_temp: String,
+    pub thickness: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StefanBoltzmannParams {
+    /// Emissivity in [0, 1].
+    pub emissivity: String,
+    pub area: String,
+    pub temperature_k: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct MassRadiusParams {
+    pub mass: String,
+    pub radius: String,
+}
+
+// ---- chemistry ---- //
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct FormulaParams {
+    /// Chemical formula like "H2O", "Ca(OH)2", "Fe2(SO4)3".
+    pub formula: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PhParams {
+    pub h_concentration: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PohParams {
+    pub oh_concentration: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MolarityParams {
+    pub moles: String,
+    pub volume_litres: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MolalityParams {
+    pub moles: String,
+    pub kilograms_solvent: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HendersonHasselbalchParams {
+    pub pka: String,
+    pub conjugate_base: String,
+    pub weak_acid: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DecayParams {
+    pub decay_constant: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HalfLifeInputParams {
+    pub half_life: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IdealGasMolesParams {
+    pub pressure_pa: String,
+    pub volume_m3: String,
+    pub temperature_k: String,
+}
+
 // --------------------------------------------------------------------------- //
 //  Tool router — one method per MCP tool.
 // --------------------------------------------------------------------------- //
@@ -779,9 +1132,7 @@ impl MathCalcServer {
         name = "evaluateWithVariables",
         description = "Evaluate an arithmetic expression with a JSON variable map, e.g. expression='2*x+y', variables='{\"x\":3,\"y\":1}'."
     )]
-    fn evaluate_with_variables(
-        Parameters(p): Parameters<EvaluateWithVariablesParams>,
-    ) -> String {
+    fn evaluate_with_variables(Parameters(p): Parameters<EvaluateWithVariablesParams>) -> String {
         programmable::evaluate_with_variables(&p.expression, &p.variables)
     }
 
@@ -1385,6 +1736,684 @@ impl MathCalcServer {
     fn nyquist_rate(Parameters(p): Parameters<NyquistParams>) -> String {
         digital_electronics::nyquist_rate(&p.bandwidth_hz)
     }
+
+    // ---- Statistics ----------------------------------------------------- //
+
+    #[tool(
+        name = "mean",
+        description = "Arithmetic mean of a comma-separated array."
+    )]
+    fn mean(Parameters(p): Parameters<ValuesParams>) -> String {
+        statistics::mean(&p.values)
+    }
+
+    #[tool(
+        name = "median",
+        description = "Median (middle value) of an array; averages middles for even-length input."
+    )]
+    fn median(Parameters(p): Parameters<ValuesParams>) -> String {
+        statistics::median(&p.values)
+    }
+
+    #[tool(
+        name = "mode",
+        description = "Mode(s) of an array — most frequent value(s) with their count."
+    )]
+    fn mode(Parameters(p): Parameters<ValuesParams>) -> String {
+        statistics::mode(&p.values)
+    }
+
+    #[tool(
+        name = "variance",
+        description = "Variance of an array. Set population=true for n denominator, false for n-1 (sample)."
+    )]
+    fn variance(Parameters(p): Parameters<ValuesPopulationParams>) -> String {
+        statistics::variance(&p.values, p.population)
+    }
+
+    #[tool(
+        name = "stdDev",
+        description = "Standard deviation. population=true → σ, false → s."
+    )]
+    fn std_dev(Parameters(p): Parameters<ValuesPopulationParams>) -> String {
+        statistics::std_dev(&p.values, p.population)
+    }
+
+    #[tool(
+        name = "percentile",
+        description = "Linear-interpolated percentile (R-7/Excel definition). p in [0, 100]."
+    )]
+    fn percentile(Parameters(p): Parameters<PercentileParams>) -> String {
+        statistics::percentile(&p.values, &p.p)
+    }
+
+    #[tool(
+        name = "quartile",
+        description = "Quartile Q1, Q2, or Q3 (q in [1, 3])."
+    )]
+    fn quartile(Parameters(p): Parameters<QuartileParams>) -> String {
+        statistics::quartile(&p.values, p.q)
+    }
+
+    #[tool(
+        name = "iqr",
+        description = "Interquartile range Q3 - Q1 (also returns Q1 and Q3)."
+    )]
+    fn iqr(Parameters(p): Parameters<ValuesParams>) -> String {
+        statistics::iqr(&p.values)
+    }
+
+    #[tool(
+        name = "correlation",
+        description = "Pearson correlation coefficient between two equal-length series."
+    )]
+    fn correlation(Parameters(p): Parameters<TwoSeriesParams>) -> String {
+        statistics::correlation(&p.x_values, &p.y_values)
+    }
+
+    #[tool(
+        name = "covariance",
+        description = "Sample (population=false) or population covariance between two series."
+    )]
+    fn covariance(Parameters(p): Parameters<CovarianceParams>) -> String {
+        statistics::covariance(&p.x_values, &p.y_values, p.population)
+    }
+
+    #[tool(
+        name = "linearRegression",
+        description = "Ordinary least-squares fit y = a*x + b. Returns slope, intercept, R, R²."
+    )]
+    fn linear_regression(Parameters(p): Parameters<TwoSeriesParams>) -> String {
+        statistics::linear_regression(&p.x_values, &p.y_values)
+    }
+
+    #[tool(
+        name = "normalPdf",
+        description = "Normal distribution PDF: f(x; mean, stdDev)."
+    )]
+    fn normal_pdf(Parameters(p): Parameters<NormalDistParams>) -> String {
+        statistics::normal_pdf(&p.x, &p.mean, &p.std_dev)
+    }
+
+    #[tool(
+        name = "normalCdf",
+        description = "Normal distribution CDF using erf approximation (max error ~1.5e-7)."
+    )]
+    fn normal_cdf(Parameters(p): Parameters<NormalDistParams>) -> String {
+        statistics::normal_cdf(&p.x, &p.mean, &p.std_dev)
+    }
+
+    #[tool(
+        name = "tTestOneSample",
+        description = "One-sample t-test against a hypothesized mean. Returns t, df, mean, SE."
+    )]
+    fn t_test_one_sample(Parameters(p): Parameters<TTestParams>) -> String {
+        statistics::t_test_one_sample(&p.values, &p.hypothesized_mean)
+    }
+
+    #[tool(
+        name = "binomialPmf",
+        description = "Binomial PMF B(n, p) at k. Capped at n=1000."
+    )]
+    fn binomial_pmf(Parameters(p): Parameters<BinomialPmfParams>) -> String {
+        statistics::binomial_pmf(p.n, p.k, &p.p)
+    }
+
+    #[tool(
+        name = "confidenceInterval",
+        description = "Two-sided confidence interval for the mean (z-score)."
+    )]
+    fn confidence_interval(Parameters(p): Parameters<ConfidenceIntervalParams>) -> String {
+        statistics::confidence_interval(&p.values, &p.confidence_level)
+    }
+
+    // ---- Combinatorics & number theory --------------------------------- //
+
+    #[tool(
+        name = "combination",
+        description = "Binomial coefficient C(n, k) — exact arbitrary precision."
+    )]
+    fn combination(Parameters(p): Parameters<NchooseKParams>) -> String {
+        combinatorics::combination(p.n, p.k)
+    }
+
+    #[tool(
+        name = "permutation",
+        description = "Falling factorial P(n, k) = n!/(n-k)! — exact."
+    )]
+    fn permutation(Parameters(p): Parameters<NchooseKParams>) -> String {
+        combinatorics::permutation(p.n, p.k)
+    }
+
+    #[tool(
+        name = "fibonacci",
+        description = "F(n) — exact arbitrary precision (n <= 50000)."
+    )]
+    fn fibonacci(Parameters(p): Parameters<SingleIntegerParams>) -> String {
+        combinatorics::fibonacci(p.n)
+    }
+
+    #[tool(
+        name = "isPrime",
+        description = "Primality test via trial division (works up to ~10^18)."
+    )]
+    fn is_prime(Parameters(p): Parameters<SingleIntegerParams>) -> String {
+        combinatorics::is_prime(p.n)
+    }
+
+    #[tool(
+        name = "nextPrime",
+        description = "Smallest prime strictly greater than n."
+    )]
+    fn next_prime(Parameters(p): Parameters<SingleIntegerParams>) -> String {
+        combinatorics::next_prime(p.n)
+    }
+
+    #[tool(
+        name = "primeFactors",
+        description = "Multiset of prime factors of n via trial division (n <= 10^12)."
+    )]
+    fn prime_factors(Parameters(p): Parameters<SingleIntegerParams>) -> String {
+        combinatorics::prime_factors(p.n)
+    }
+
+    #[tool(
+        name = "eulerTotient",
+        description = "Euler's totient φ(n): count of integers in [1,n] coprime to n."
+    )]
+    fn euler_totient(Parameters(p): Parameters<SingleIntegerParams>) -> String {
+        combinatorics::euler_totient(p.n)
+    }
+
+    // ---- Geometry ------------------------------------------------------ //
+
+    #[tool(name = "circleArea", description = "Area of a circle: π·r².")]
+    fn circle_area(Parameters(p): Parameters<RadiusParams>) -> String {
+        geometry::circle_area(&p.radius)
+    }
+
+    #[tool(
+        name = "circlePerimeter",
+        description = "Circumference of a circle: 2π·r."
+    )]
+    fn circle_perimeter(Parameters(p): Parameters<RadiusParams>) -> String {
+        geometry::circle_perimeter(&p.radius)
+    }
+
+    #[tool(name = "sphereVolume", description = "Volume of a sphere: 4π·r³/3.")]
+    fn sphere_volume(Parameters(p): Parameters<RadiusParams>) -> String {
+        geometry::sphere_volume(&p.radius)
+    }
+
+    #[tool(name = "sphereArea", description = "Surface area of a sphere: 4π·r².")]
+    fn sphere_area(Parameters(p): Parameters<RadiusParams>) -> String {
+        geometry::sphere_area(&p.radius)
+    }
+
+    #[tool(
+        name = "triangleArea",
+        description = "Triangle area via Heron's formula. sides=\"a,b,c\"."
+    )]
+    fn triangle_area(Parameters(p): Parameters<TriangleSidesParams>) -> String {
+        geometry::triangle_area(&p.sides)
+    }
+
+    #[tool(
+        name = "polygonArea",
+        description = "Polygon area via Shoelace formula. coordinates=\"x1,y1,x2,y2,...\"."
+    )]
+    fn polygon_area(Parameters(p): Parameters<PolygonCoordsParams>) -> String {
+        geometry::polygon_area(&p.coordinates)
+    }
+
+    #[tool(name = "coneVolume", description = "Cone volume: π·r²·h/3.")]
+    fn cone_volume(Parameters(p): Parameters<RadiusHeightParams>) -> String {
+        geometry::cone_volume(&p.radius, &p.height)
+    }
+
+    #[tool(name = "cylinderVolume", description = "Cylinder volume: π·r²·h.")]
+    fn cylinder_volume(Parameters(p): Parameters<RadiusHeightParams>) -> String {
+        geometry::cylinder_volume(&p.radius, &p.height)
+    }
+
+    #[tool(
+        name = "distance2D",
+        description = "Euclidean distance between two 2D points."
+    )]
+    fn distance_2d(Parameters(p): Parameters<TwoPointsParams>) -> String {
+        geometry::distance_2d(&p.p1, &p.p2)
+    }
+
+    #[tool(
+        name = "distance3D",
+        description = "Euclidean distance between two 3D points."
+    )]
+    fn distance_3d(Parameters(p): Parameters<TwoPointsParams>) -> String {
+        geometry::distance_3d(&p.p1, &p.p2)
+    }
+
+    #[tool(
+        name = "regularPolygon",
+        description = "Area, perimeter, apothem, circumradius for a regular n-gon."
+    )]
+    fn regular_polygon(Parameters(p): Parameters<RegularPolygonParams>) -> String {
+        geometry::regular_polygon(p.sides, &p.side_length)
+    }
+
+    #[tool(
+        name = "pointToLineDistance",
+        description = "Perpendicular distance from a 2D point to a line through two points."
+    )]
+    fn point_to_line_distance(Parameters(p): Parameters<PointToLineParams>) -> String {
+        geometry::point_to_line_distance(&p.point, &p.line_p1, &p.line_p2)
+    }
+
+    // ---- Complex numbers ----------------------------------------------- //
+
+    #[tool(
+        name = "complexAdd",
+        description = "Add complex numbers a + b. Inputs are \"real,imag\" CSV."
+    )]
+    fn complex_add(Parameters(p): Parameters<ComplexBinaryParams>) -> String {
+        complex::complex_add(&p.a, &p.b)
+    }
+
+    #[tool(name = "complexMult", description = "Multiply complex numbers a × b.")]
+    fn complex_mult(Parameters(p): Parameters<ComplexBinaryParams>) -> String {
+        complex::complex_mult(&p.a, &p.b)
+    }
+
+    #[tool(name = "complexDiv", description = "Divide complex numbers a / b.")]
+    fn complex_div(Parameters(p): Parameters<ComplexBinaryParams>) -> String {
+        complex::complex_div(&p.a, &p.b)
+    }
+
+    #[tool(
+        name = "complexConjugate",
+        description = "Complex conjugate of z (flips sign of imaginary part)."
+    )]
+    fn complex_conjugate(Parameters(p): Parameters<ComplexUnaryParams>) -> String {
+        complex::complex_conjugate(&p.z)
+    }
+
+    #[tool(
+        name = "complexPower",
+        description = "z^n for real exponent via De Moivre."
+    )]
+    fn complex_power(Parameters(p): Parameters<ComplexPowerParams>) -> String {
+        complex::complex_power(&p.z, &p.exponent)
+    }
+
+    #[tool(
+        name = "complexMagnitude",
+        description = "Magnitude |z| = sqrt(real² + imag²)."
+    )]
+    fn complex_magnitude(Parameters(p): Parameters<ComplexUnaryParams>) -> String {
+        complex::complex_magnitude(&p.z)
+    }
+
+    #[tool(
+        name = "complexPhase",
+        description = "Phase angle in degrees, range (-180, 180]."
+    )]
+    fn complex_phase(Parameters(p): Parameters<ComplexUnaryParams>) -> String {
+        complex::complex_phase(&p.z)
+    }
+
+    #[tool(
+        name = "polarToRect",
+        description = "Polar (magnitude, angleDegrees) → rectangular (real, imag)."
+    )]
+    fn polar_to_rect(Parameters(p): Parameters<PolarToRectParams>) -> String {
+        complex::polar_to_rect(&p.magnitude, &p.angle_degrees)
+    }
+
+    #[tool(
+        name = "rectToPolar",
+        description = "Rectangular (real, imag) → polar (magnitude, angleDegrees)."
+    )]
+    fn rect_to_polar(Parameters(p): Parameters<ComplexUnaryParams>) -> String {
+        complex::rect_to_polar(&p.z)
+    }
+
+    #[tool(
+        name = "complexSqrt",
+        description = "Principal square root of a complex number."
+    )]
+    fn complex_sqrt(Parameters(p): Parameters<ComplexUnaryParams>) -> String {
+        complex::complex_sqrt(&p.z)
+    }
+
+    // ---- Crypto / encoding -------------------------------------------- //
+
+    #[tool(
+        name = "hashMd5",
+        description = "MD5 digest of UTF-8 input. Hex-encoded."
+    )]
+    fn hash_md5(Parameters(p): Parameters<StringInputParams>) -> String {
+        crypto::hash_md5(&p.input)
+    }
+
+    #[tool(
+        name = "hashSha1",
+        description = "SHA-1 digest of UTF-8 input. Hex-encoded."
+    )]
+    fn hash_sha1(Parameters(p): Parameters<StringInputParams>) -> String {
+        crypto::hash_sha1(&p.input)
+    }
+
+    #[tool(
+        name = "hashSha256",
+        description = "SHA-256 digest of UTF-8 input. Hex-encoded."
+    )]
+    fn hash_sha256(Parameters(p): Parameters<StringInputParams>) -> String {
+        crypto::hash_sha256(&p.input)
+    }
+
+    #[tool(
+        name = "hashSha512",
+        description = "SHA-512 digest of UTF-8 input. Hex-encoded."
+    )]
+    fn hash_sha512(Parameters(p): Parameters<StringInputParams>) -> String {
+        crypto::hash_sha512(&p.input)
+    }
+
+    #[tool(
+        name = "base64Encode",
+        description = "Base64 (standard alphabet) encode of UTF-8 input."
+    )]
+    fn base64_encode(Parameters(p): Parameters<StringInputParams>) -> String {
+        crypto::base64_encode(&p.input)
+    }
+
+    #[tool(
+        name = "base64Decode",
+        description = "Base64 decode → UTF-8 string. Errors on invalid base64 or non-UTF-8 bytes."
+    )]
+    fn base64_decode(Parameters(p): Parameters<StringInputParams>) -> String {
+        crypto::base64_decode(&p.input)
+    }
+
+    #[tool(
+        name = "urlEncode",
+        description = "Percent-encode a UTF-8 string for safe URL use."
+    )]
+    fn url_encode(Parameters(p): Parameters<StringInputParams>) -> String {
+        crypto::url_encode(&p.input)
+    }
+
+    #[tool(
+        name = "urlDecode",
+        description = "Percent-decode a URL-encoded string back to UTF-8."
+    )]
+    fn url_decode(Parameters(p): Parameters<StringInputParams>) -> String {
+        crypto::url_decode(&p.input)
+    }
+
+    #[tool(
+        name = "hexEncode",
+        description = "Lowercase hex encode of UTF-8 input bytes."
+    )]
+    fn hex_encode(Parameters(p): Parameters<StringInputParams>) -> String {
+        crypto::hex_encode(&p.input)
+    }
+
+    #[tool(
+        name = "crc32",
+        description = "CRC-32 (IEEE) of UTF-8 input. Returns DECIMAL and HEX."
+    )]
+    fn crc32(Parameters(p): Parameters<StringInputParams>) -> String {
+        crypto::crc32(&p.input)
+    }
+
+    // ---- Matrices ------------------------------------------------------ //
+
+    #[tool(
+        name = "matrixAdd",
+        description = "Element-wise addition of two same-shape matrices."
+    )]
+    fn matrix_add(Parameters(p): Parameters<MatrixBinaryParams>) -> String {
+        matrices::matrix_add(&p.a, &p.b)
+    }
+
+    #[tool(
+        name = "matrixMultiply",
+        description = "Standard matrix multiplication (a.cols == b.rows)."
+    )]
+    fn matrix_multiply(Parameters(p): Parameters<MatrixBinaryParams>) -> String {
+        matrices::matrix_mult(&p.a, &p.b)
+    }
+
+    #[tool(
+        name = "matrixTranspose",
+        description = "Transpose a matrix (rows ↔ columns)."
+    )]
+    fn matrix_transpose(Parameters(p): Parameters<MatrixParams>) -> String {
+        matrices::matrix_transpose(&p.a)
+    }
+
+    #[tool(
+        name = "matrixDeterminant",
+        description = "Determinant via partial-pivoted Gaussian elimination."
+    )]
+    fn matrix_determinant(Parameters(p): Parameters<MatrixParams>) -> String {
+        matrices::matrix_determinant(&p.a)
+    }
+
+    #[tool(
+        name = "matrixInverse",
+        description = "Inverse via Gauss-Jordan elimination (singular matrices error)."
+    )]
+    fn matrix_inverse(Parameters(p): Parameters<MatrixParams>) -> String {
+        matrices::matrix_inverse(&p.a)
+    }
+
+    #[tool(
+        name = "matrixTrace",
+        description = "Trace = sum of diagonal entries (square matrices only)."
+    )]
+    fn matrix_trace(Parameters(p): Parameters<MatrixParams>) -> String {
+        matrices::matrix_trace(&p.a)
+    }
+
+    #[tool(
+        name = "matrixRank",
+        description = "Rank via Gauss-Jordan elimination with EPS=1e-9 pivot threshold."
+    )]
+    fn matrix_rank(Parameters(p): Parameters<MatrixParams>) -> String {
+        matrices::matrix_rank(&p.a)
+    }
+
+    #[tool(
+        name = "matrixEigenvalues2x2",
+        description = "Eigenvalues of a 2x2 matrix (real or complex conjugate pair)."
+    )]
+    fn matrix_eigenvalues_2x2(Parameters(p): Parameters<MatrixParams>) -> String {
+        matrices::matrix_eigenvalues_2x2(&p.a)
+    }
+
+    #[tool(
+        name = "crossProduct",
+        description = "3D cross product a × b. Vectors are \"x,y,z\" CSV."
+    )]
+    fn cross_product(Parameters(p): Parameters<MatrixBinaryParams>) -> String {
+        matrices::cross_product(&p.a, &p.b)
+    }
+
+    #[tool(
+        name = "gaussianElimination",
+        description = "Solve Ax = b via partial-pivoted Gaussian elimination on the augmented matrix."
+    )]
+    fn gaussian_elimination(Parameters(p): Parameters<GaussianEliminationParams>) -> String {
+        matrices::gaussian_elimination(&p.coefficients)
+    }
+
+    // ---- Physics ------------------------------------------------------- //
+
+    #[tool(
+        name = "kinematics",
+        description = "Constant-acceleration kinematics: returns final velocity and displacement."
+    )]
+    fn kinematics(Parameters(p): Parameters<KinematicsParams>) -> String {
+        physics::kinematics(&p.initial_velocity, &p.acceleration, &p.time)
+    }
+
+    #[tool(
+        name = "projectileMotion",
+        description = "Projectile motion (no air resistance): range, peak height, time of flight."
+    )]
+    fn projectile_motion(Parameters(p): Parameters<ProjectileParams>) -> String {
+        physics::projectile_motion(&p.speed, &p.angle_degrees, &p.gravity)
+    }
+
+    #[tool(name = "newtonsForce", description = "Newton's second law: F = m·a.")]
+    fn newtons_force(Parameters(p): Parameters<MassAccelParams>) -> String {
+        physics::newtons_force(&p.mass, &p.acceleration)
+    }
+
+    #[tool(
+        name = "gravitationalForce",
+        description = "Universal gravitation: F = G·m1·m2 / r²."
+    )]
+    fn gravitational_force(Parameters(p): Parameters<GravitationalForceParams>) -> String {
+        physics::gravitational_force(&p.m1, &p.m2, &p.distance)
+    }
+
+    #[tool(
+        name = "dopplerEffect",
+        description = "Classical Doppler shift for sound. Approaching → positive velocity."
+    )]
+    fn doppler_effect(Parameters(p): Parameters<DopplerParams>) -> String {
+        physics::doppler_effect(
+            &p.source_freq,
+            &p.sound_speed,
+            &p.source_velocity,
+            &p.observer_velocity,
+        )
+    }
+
+    #[tool(name = "waveLength", description = "λ = waveSpeed / frequency.")]
+    fn wave_length(Parameters(p): Parameters<WaveLengthParams>) -> String {
+        physics::wave_length(&p.frequency, &p.wave_speed)
+    }
+
+    #[tool(name = "planckEnergy", description = "Photon energy E = h·f (joules).")]
+    fn planck_energy(Parameters(p): Parameters<FrequencyParams>) -> String {
+        physics::planck_energy(&p.frequency)
+    }
+
+    #[tool(
+        name = "idealGasLaw",
+        description = "PV = nRT solver. solveFor=P|V|n|T (provide the other three)."
+    )]
+    fn ideal_gas_law(Parameters(p): Parameters<IdealGasLawParams>) -> String {
+        physics::ideal_gas_law(
+            &p.pressure,
+            &p.volume,
+            &p.moles,
+            &p.temperature,
+            &p.solve_for,
+        )
+    }
+
+    #[tool(
+        name = "heatTransfer",
+        description = "Conduction Q = k·A·ΔT / thickness (Fourier's law)."
+    )]
+    fn heat_transfer(Parameters(p): Parameters<HeatTransferParams>) -> String {
+        physics::heat_transfer(
+            &p.thermal_conductivity,
+            &p.area,
+            &p.delta_temp,
+            &p.thickness,
+        )
+    }
+
+    #[tool(
+        name = "stefanBoltzmann",
+        description = "Radiated power P = σ·ε·A·T⁴ (T in Kelvin, ε in [0,1])."
+    )]
+    fn stefan_boltzmann(Parameters(p): Parameters<StefanBoltzmannParams>) -> String {
+        physics::stefan_boltzmann(&p.emissivity, &p.area, &p.temperature_k)
+    }
+
+    #[tool(name = "escapeVelocity", description = "Escape velocity v = √(2GM/r).")]
+    fn escape_velocity(Parameters(p): Parameters<MassRadiusParams>) -> String {
+        physics::escape_velocity(&p.mass, &p.radius)
+    }
+
+    #[tool(
+        name = "orbitalVelocity",
+        description = "Circular orbital velocity v = √(GM/r)."
+    )]
+    fn orbital_velocity(Parameters(p): Parameters<MassRadiusParams>) -> String {
+        physics::orbital_velocity(&p.mass, &p.radius)
+    }
+
+    // ---- Chemistry ----------------------------------------------------- //
+
+    #[tool(
+        name = "molarMass",
+        description = "Molar mass of a chemical formula. Supports nested parens like Fe2(SO4)3."
+    )]
+    fn molar_mass(Parameters(p): Parameters<FormulaParams>) -> String {
+        chemistry::molar_mass(&p.formula)
+    }
+
+    #[tool(name = "ph", description = "pH from [H⁺] (mol/L): pH = -log10([H⁺]).")]
+    fn ph(Parameters(p): Parameters<PhParams>) -> String {
+        chemistry::ph(&p.h_concentration)
+    }
+
+    #[tool(
+        name = "poh",
+        description = "pOH from [OH⁻] (mol/L): pOH = -log10([OH⁻])."
+    )]
+    fn poh(Parameters(p): Parameters<PohParams>) -> String {
+        chemistry::poh(&p.oh_concentration)
+    }
+
+    #[tool(
+        name = "molarity",
+        description = "Molarity (mol/L) = moles / volumeLitres."
+    )]
+    fn molarity(Parameters(p): Parameters<MolarityParams>) -> String {
+        chemistry::molarity(&p.moles, &p.volume_litres)
+    }
+
+    #[tool(
+        name = "molality",
+        description = "Molality (mol/kg) = moles / kilogramsSolvent."
+    )]
+    fn molality(Parameters(p): Parameters<MolalityParams>) -> String {
+        chemistry::molality(&p.moles, &p.kilograms_solvent)
+    }
+
+    #[tool(
+        name = "hendersonHasselbalch",
+        description = "pH = pKa + log10([conjugateBase] / [weakAcid])."
+    )]
+    fn henderson_hasselbalch(Parameters(p): Parameters<HendersonHasselbalchParams>) -> String {
+        chemistry::henderson_hasselbalch(&p.pka, &p.conjugate_base, &p.weak_acid)
+    }
+
+    #[tool(name = "halfLife", description = "Half-life t½ = ln(2) / λ.")]
+    fn half_life(Parameters(p): Parameters<DecayParams>) -> String {
+        chemistry::half_life(&p.decay_constant)
+    }
+
+    #[tool(name = "decayConstant", description = "Decay constant λ = ln(2) / t½.")]
+    fn decay_constant(Parameters(p): Parameters<HalfLifeInputParams>) -> String {
+        chemistry::decay_constant(&p.half_life)
+    }
+
+    #[tool(
+        name = "idealGasMoles",
+        description = "Moles of an ideal gas: n = PV / (RT). SI units (Pa, m³, K)."
+    )]
+    fn ideal_gas_moles(Parameters(p): Parameters<IdealGasMolesParams>) -> String {
+        chemistry::ideal_gas_moles(&p.pressure_pa, &p.volume_m3, &p.temperature_k)
+    }
 }
 
 #[tool_handler]
@@ -1399,14 +2428,14 @@ impl ServerHandler for MathCalcServer {
             .with_protocol_version(ProtocolVersion::LATEST)
             .with_server_info(Implementation::from_build_env())
             .with_instructions(format!(
-                "Pure-Rust math calculator MCP server. {tool_count} tools across 16 categories. \
+                "Pure-Rust math calculator MCP server. {tool_count} tools across 24 categories. \
                  Response format: `TOOL_NAME: OK | KEY: value | ...` (inline) or block layout with `ROW_N` keys for tabular payloads. \
                  Errors: `TOOL_NAME: ERROR` + `REASON: [CODE] text` + optional `DETAIL: k=v`. \
                  Error codes: DOMAIN_ERROR, OUT_OF_RANGE, DIVISION_BY_ZERO, PARSE_ERROR, INVALID_INPUT, UNKNOWN_VARIABLE, UNKNOWN_FUNCTION, OVERFLOW, NOT_IMPLEMENTED. \
                  Categories: \
                  Basic (add, subtract, multiply, divide, power, modulo, abs); \
                  Scientific (sqrt, log, log10, factorial, sin, cos, tan); \
-                 Programmable (evaluate, evaluateWithVariables, evaluateExact, evaluateExactWithVariables); \
+                 Programmable (evaluate, evaluateWithVariables, evaluateExact, evaluateExactWithVariables) — supports constants pi/e/tau/phi and functions exp, ln, log2, asin/acos/atan/atan2, sinh/cosh/tanh, asinh/acosh/atanh, cbrt, round, trunc, sign, factorial, min/max/mod/hypot/pow/gcd/lcm; \
                  Vector/SIMD (sumArray, dotProduct, scaleArray, magnitudeArray); \
                  Financial (compoundInterest, loanPayment, presentValue, futureValueAnnuity, returnOnInvestment, amortizationSchedule); \
                  Calculus (derivative, nthDerivative, definiteIntegral, tangentLine); \
@@ -1418,7 +2447,15 @@ impl ServerHandler for MathCalcServer {
                  Graphing (plotFunction, solveEquation, findRoots); \
                  Network (subnetCalculator, ipToBinary, binaryToIp, ipToDecimal, decimalToIp, ipInSubnet, vlsmSubnets, summarizeSubnets, expandIpv6, compressIpv6, transferTime, throughput, tcpThroughput); \
                  Analog electronics (ohmsLaw, resistorCombination, capacitorCombination, inductorCombination, voltageDivider, currentDivider, rcTimeConstant, rlTimeConstant, rlcResonance, impedance, decibelConvert, filterCutoff, ledResistor, wheatstoneBridge); \
-                 Digital electronics (convertBase, twosComplement, grayCode, bitwiseOp, adcResolution, dacOutput, timer555Astable, timer555Monostable, frequencyPeriod, nyquistRate).",
+                 Digital electronics (convertBase, twosComplement, grayCode, bitwiseOp, adcResolution, dacOutput, timer555Astable, timer555Monostable, frequencyPeriod, nyquistRate); \
+                 Statistics (mean, median, mode, variance, stdDev, percentile, quartile, iqr, correlation, covariance, linearRegression, normalPdf, normalCdf, tTestOneSample, binomialPmf, confidenceInterval); \
+                 Combinatorics (combination, permutation, fibonacci, isPrime, nextPrime, primeFactors, eulerTotient); \
+                 Geometry (circleArea, circlePerimeter, sphereVolume, sphereArea, triangleArea, polygonArea, coneVolume, cylinderVolume, distance2D, distance3D, regularPolygon, pointToLineDistance); \
+                 Complex numbers (complexAdd, complexMult, complexDiv, complexConjugate, complexPower, complexMagnitude, complexPhase, polarToRect, rectToPolar, complexSqrt); \
+                 Crypto/Encoding (hashMd5, hashSha1, hashSha256, hashSha512, base64Encode, base64Decode, urlEncode, urlDecode, hexEncode, crc32); \
+                 Matrices (matrixAdd, matrixMultiply, matrixTranspose, matrixDeterminant, matrixInverse, matrixTrace, matrixRank, matrixEigenvalues2x2, crossProduct, gaussianElimination); \
+                 Physics (kinematics, projectileMotion, newtonsForce, gravitationalForce, dopplerEffect, waveLength, planckEnergy, idealGasLaw, heatTransfer, stefanBoltzmann, escapeVelocity, orbitalVelocity); \
+                 Chemistry (molarMass, ph, poh, molarity, molality, hendersonHasselbalch, halfLife, decayConstant, idealGasMoles).",
             ))
     }
 }

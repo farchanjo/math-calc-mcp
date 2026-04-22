@@ -1,4 +1,3 @@
-
 //!
 //! All public functions return `String` using the response envelope.
 //!
@@ -33,7 +32,7 @@ const TOOL_DATETIME_DIFFERENCE: &str = "DATETIME_DIFFERENCE";
 // --------------------------------------------------------------------------- //
 
 /// Convert a datetime string from one IANA timezone to another, returning ISO-zoned form.
-#[must_use] 
+#[must_use]
 pub fn convert_timezone(datetime: &str, from_timezone: &str, to_timezone: &str) -> String {
     let from_zone = match resolve_zone(TOOL_CONVERT_TIMEZONE, from_timezone) {
         Ok(zone) => zone,
@@ -57,7 +56,7 @@ pub fn convert_timezone(datetime: &str, from_timezone: &str, to_timezone: &str) 
 }
 
 /// Reformat a datetime string using explicit input/output format keywords or strftime patterns.
-#[must_use] 
+#[must_use]
 pub fn format_datetime(
     datetime: &str,
     input_format: &str,
@@ -79,7 +78,7 @@ pub fn format_datetime(
 }
 
 /// Current datetime in the given IANA timezone, rendered using a format keyword or strftime pattern.
-#[must_use] 
+#[must_use]
 pub fn current_datetime(timezone: &str, format: &str) -> String {
     let zone = match resolve_zone(TOOL_CURRENT_DATE_TIME, timezone) {
         Ok(zone) => zone,
@@ -94,7 +93,7 @@ pub fn current_datetime(timezone: &str, format: &str) -> String {
 
 /// List IANA timezone IDs, filtered by region prefix. Empty string or `"all"`
 /// returns every zone. Output is a single `VALUES` field carrying a CSV.
-#[must_use] 
+#[must_use]
 pub fn list_timezones(region: &str) -> String {
     let trimmed = region.trim();
     let region_label = if trimmed.is_empty() { "all" } else { trimmed };
@@ -129,7 +128,7 @@ pub fn list_timezones(region: &str) -> String {
 }
 
 /// Compute the positive difference between two datetimes parsed in `timezone`.
-#[must_use] 
+#[must_use]
 pub fn datetime_difference(datetime1: &str, datetime2: &str, timezone: &str) -> String {
     let zone = match resolve_zone(TOOL_DATETIME_DIFFERENCE, timezone) {
         Ok(zone) => zone,
@@ -336,7 +335,13 @@ fn compute_difference(first: &Zoned, second: &Zoned) -> String {
         .and_then(|s| s.round(SpanRound::new().largest(Unit::Year).relative(earlier)))
     {
         Ok(s) => s,
-        Err(e) => return error(TOOL_DATETIME_DIFFERENCE, ErrorCode::InvalidInput, &e.to_string()),
+        Err(e) => {
+            return error(
+                TOOL_DATETIME_DIFFERENCE,
+                ErrorCode::InvalidInput,
+                &e.to_string(),
+            );
+        }
     };
 
     let years = span.get_years();
@@ -415,7 +420,10 @@ mod tests {
     #[test]
     fn format_iso_offset_has_offset_no_zone() {
         let out = format_datetime("2026-04-22T10:00:00Z", "iso", "iso-offset", "UTC");
-        assert!(out.starts_with("FORMAT_DATETIME: OK | RESULT: "), "got {out}");
+        assert!(
+            out.starts_with("FORMAT_DATETIME: OK | RESULT: "),
+            "got {out}"
+        );
         assert!(!out.contains('['), "got {out}");
         assert!(out.contains("+00:00") || out.contains('Z'), "got {out}");
     }
@@ -423,7 +431,10 @@ mod tests {
     #[test]
     fn format_rfc1123_output() {
         let out = format_datetime("2026-03-04T12:00:00Z", "iso", "rfc1123", "UTC");
-        assert!(out.starts_with("FORMAT_DATETIME: OK | RESULT: "), "got {out}");
+        assert!(
+            out.starts_with("FORMAT_DATETIME: OK | RESULT: "),
+            "got {out}"
+        );
         assert!(out.contains("Mar 2026"), "got {out}");
         assert!(out.contains("12:00:00"), "got {out}");
     }
@@ -445,12 +456,7 @@ mod tests {
             format_datetime("1000000000", "epoch", "%d/%m/%Y %H:%M", "UTC"),
             "FORMAT_DATETIME: OK | RESULT: 09/09/2001 01:46"
         );
-        let full_names = format_datetime(
-            "1000000000",
-            "epoch",
-            "%A, %B %d, %Y",
-            "UTC",
-        );
+        let full_names = format_datetime("1000000000", "epoch", "%A, %B %d, %Y", "UTC");
         assert!(
             full_names.contains("Sunday") && full_names.contains("September"),
             "got {full_names}"
@@ -461,11 +467,7 @@ mod tests {
     fn current_datetime_strftime_year_is_four_digits() {
         // Regression: `%Y` used to be lowercased to `%y` in the tool layer.
         let out = current_datetime("UTC", "%Y");
-        let year_section = out
-            .rsplit_once("| RESULT: ")
-            .expect("has RESULT")
-            .1
-            .trim();
+        let year_section = out.rsplit_once("| RESULT: ").expect("has RESULT").1.trim();
         assert_eq!(year_section.len(), 4, "expected 4-digit year, got {out}");
     }
 
@@ -494,7 +496,10 @@ mod tests {
             out.starts_with("LIST_TIMEZONES: OK | REGION: Europe | COUNT: "),
             "got {out}"
         );
-        assert!(out.contains("Europe/Paris"), "missing Europe/Paris in {out}");
+        assert!(
+            out.contains("Europe/Paris"),
+            "missing Europe/Paris in {out}"
+        );
         assert!(out.contains("| VALUES: "), "got {out}");
     }
 

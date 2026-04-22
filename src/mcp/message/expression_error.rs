@@ -21,11 +21,9 @@ pub fn expression_error_envelope(tool: &str, err: &ExpressionError) -> String {
             "unexpected character in expression",
             Some(format!("pos={pos}, char={ch}")),
         ),
-        ExpressionError::UnexpectedEnd => (
-            ErrorCode::ParseError,
-            "unexpected end of expression",
-            None,
-        ),
+        ExpressionError::UnexpectedEnd => {
+            (ErrorCode::ParseError, "unexpected end of expression", None)
+        }
         ExpressionError::InvalidNumber(token) => (
             ErrorCode::ParseError,
             "invalid number literal",

@@ -8,8 +8,8 @@ arithma is a **stateless stdio MCP server**. Each tool call is a self-contained 
 graph TB
     Client["MCP client<br/>(Claude / Cursor / ...)"]
     Main["main.rs<br/>Tokio + stdio transport"]
-    Server["server.rs<br/>#[tool_router] — 87 tools"]
-    Tools["tools/*<br/>15 category modules"]
+    Server["server.rs<br/>#[tool_router] — 173 tools"]
+    Tools["tools/*<br/>23 category modules"]
     Engine["engine/*<br/>expression · units · BigDecimal"]
     MCPMsg["mcp/*<br/>message helpers"]
 
@@ -36,18 +36,20 @@ graph TB
 
 ### 2. MCP server — `src/server.rs`
 
-- One `#[tool_router]` block registers **all 87 tools**.
+- One `#[tool_router]` block registers **all 173 tools**.
 - Handles parameter deserialization (JSON → Rust types) and schema generation.
 - Tool functions return a pre-formatted envelope string; nothing else needs to know the wire format.
 
 ### 3. Tool modules — `src/tools/*`
 
-Fifteen category modules, one file each:
+Twenty-three category modules, one file each:
 
 ```
 basic · scientific · programmable · vector · financial · calculus
 unit_converter · cooking · measure_reference · datetime · printing
 graphing · network · analog_electronics · digital_electronics
+statistics · combinatorics · geometry · complex · crypto
+matrices · physics · chemistry
 ```
 
 Every tool has the signature `pub fn name(...) -> String` and constructs its response through the shared builder in `src/mcp/message/builder.rs`. Successes become `TOOL: OK | KEY: value | …` (inline) or a block layout for tabular payloads (`ROW_N: k=v | …`). Errors become `TOOL: ERROR\nREASON: [CODE] text\n[DETAIL: k=v]` — the code set is fixed (`DOMAIN_ERROR`, `OUT_OF_RANGE`, `DIVISION_BY_ZERO`, `PARSE_ERROR`, `INVALID_INPUT`, `UNKNOWN_VARIABLE`, `UNKNOWN_FUNCTION`, `OVERFLOW`, `NOT_IMPLEMENTED`).
@@ -56,8 +58,8 @@ Every tool has the signature `pub fn name(...) -> String` and constructs its res
 
 | File | Responsibility |
 |:---|:---|
-| `expression.rs` | Recursive-descent parser + `f64` evaluator. Operators `+ - * / ^ %`; built-ins `sin`, `cos`, `tan`, `log`, `log10`, `sqrt`, `abs`, `ceil`, `floor`. |
-| `expression_exact.rs` | Same grammar, 128-bit evaluator via `astro-float` (feeds `evaluateExact*`). |
+| `expression.rs` | Recursive-descent parser + `f64` evaluator. Operators `+ - * / ^ %`; constants `pi`, `e`, `tau`, `phi`; trig/inverse-trig/hyperbolic, exp/ln/log10/log2, sqrt/cbrt, round/trunc/sign, factorial, min/max/mod/hypot/pow/gcd/lcm. |
+| `expression_exact.rs` | Same grammar and surface, 128-bit evaluator via `astro-float` (feeds `evaluateExact*`). |
 | `unit_registry.rs` | 21 categories × 118 units. Factors stored as `BigDecimal`. Temperature routes through a Celsius pivot; gas mark uses a fixed table. |
 | `bigdecimal_ext.rs` | DECIMAL128 context (34 digits, HALF_UP), scale helpers, plain-string formatting (no scientific notation). |
 
@@ -118,8 +120,8 @@ Inline layout is the default. Block layout is opt-in (`Response::ok(...).block()
 
 ## Testing strategy
 
-- **349 unit tests** inline in each module (`#[cfg(test)]`), covering edge cases (0, negatives, precision boundaries, invalid inputs).
-- **87 stdio integration tests** via `scripts/test_stdio.py` — every tool is invoked through a full JSON-RPC round trip.
+- **690 unit tests** inline in each module (`#[cfg(test)]`), covering edge cases (0, negatives, precision boundaries, invalid inputs).
+- **234 stdio integration tests** across 23 categories via `scripts/test_stdio.py` — every tool is invoked through a full JSON-RPC round trip.
 - Full suite runs in under a second.
 
 ---

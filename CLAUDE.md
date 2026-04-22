@@ -20,7 +20,7 @@ Project-specific instructions for working on arithma — The Ultimate LLM Calcul
 
 ## 🏗️ Architecture & Design
 
-**arithma** is a pure-Rust MCP server with **87 expert calculator tools** across 15 categories.
+**arithma** is a pure-Rust MCP server with **173 expert calculator tools** across 23 categories.
 
 ### Core Principles
 
@@ -28,7 +28,7 @@ Project-specific instructions for working on arithma — The Ultimate LLM Calcul
 2. **Stateless** — Each tool call is independent, no state across invocations
 3. **Zero C Dependencies** — Pure Rust, portable single binary (~3 MB)
 4. **Portable SIMD** — Auto-dispatch SSE2/AVX2/AVX-512/NEON at runtime
-5. **Tested** — 434 unit + integration tests, all green
+5. **Tested** — 924 tests (690 unit + 234 integration), all green
 
 ### Main Modules
 
@@ -37,7 +37,7 @@ src/
 ├── main.rs           → Binary entry, stdio transport (tokio)
 ├── server.rs         → MCP tool router (#[tool_router] macro)
 ├── engine/           → Math computation (expression, units, BigDecimal)
-└── tools/            → 15 tool categories (87 total tools)
+└── tools/            → 23 tool categories (173 total tools)
 ```
 
 **No other modules.** Keep code organized and focused.
@@ -62,7 +62,7 @@ src/
 |:---|:---|:---|
 | **INDEX.md** | Quick links, common tasks | [docs/INDEX.md](./docs/INDEX.md) |
 | **ARCHITECTURE.md** | System design, module flow, decisions | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) |
-| **TOOLS.md** | Complete 87-tool reference by category | [docs/TOOLS.md](./docs/TOOLS.md) |
+| **TOOLS.md** | Complete 173-tool reference by category | [docs/TOOLS.md](./docs/TOOLS.md) |
 | **DEVELOPMENT.md** | Building, testing, contributing workflow | [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) |
 | **API.md** | MCP integration, tool calling, examples | [docs/API.md](./docs/API.md) |
 
@@ -84,8 +84,8 @@ Binary: `./target/release/arithma`
 ### Testing
 
 ```bash
-cargo test --lib                   # Unit tests (349)
-python3 scripts/test_stdio.py     # Integration tests (87 tools)
+cargo test --lib                   # Unit tests (690)
+python3 scripts/test_stdio.py     # Integration tests (234 assertions, 173 tools)
 cargo test --all                   # Full suite
 ```
 
@@ -192,7 +192,7 @@ Every module has a doc comment explaining purpose and invariants:
 - Use f64/f32 for financial or unit calculations (use BigDecimal)
 - Allocate memory in tight loops (pre-allocate or cache)
 - Mix precision contexts (DECIMAL128 vs. f64 in same calculation)
-- Add features beyond the 87 tools without discussion
+- Add features beyond the 173 tools without discussion
 - Commit code that doesn't compile or fails tests
 - Use other languages in code/comments (en-US only)
 
@@ -200,14 +200,14 @@ Every module has a doc comment explaining purpose and invariants:
 
 ## 🧪 Testing Strategy
 
-### Unit Tests (349 total)
+### Unit Tests (690 total)
 
 - **Location**: Inline in source files, `#[cfg(test)]` modules
 - **Coverage**: Each public function has ≥1 test
 - **Edge cases**: 0, negative, boundaries, precision limits
 - **Run**: `cargo test --lib`
 
-### Integration Tests (87 tools)
+### Integration Tests (173 tools, 234 assertions)
 
 - **Location**: `scripts/test_stdio.py`
 - **Method**: Full JSON-RPC round trips via stdio
@@ -250,7 +250,7 @@ Update `Cargo.toml` and tag releases on GitHub.
 
 **Clients**: Claude Code, Claude Desktop, Cursor, Windsurf, OpenCode  
 **Protocol**: JSON-RPC 2.0 over stdio  
-**Tools**: 87 total (see [Tools Catalog](./docs/TOOLS.md))  
+**Tools**: 173 total (see [Tools Catalog](./docs/TOOLS.md))  
 **Parameters**: Decimal numbers as strings (preserve precision)
 
 See [API Usage](./docs/API.md) for integration examples.

@@ -212,11 +212,13 @@ fn decode_from_twos(value: &str, bits: u32) -> String {
     } else {
         parsed
     };
-    Response::ok(TWOS_COMPLEMENT).result(result.to_string()).build()
+    Response::ok(TWOS_COMPLEMENT)
+        .result(result.to_string())
+        .build()
 }
 
 /// Gray-code encode (`toGray`) or decode (`fromGray`).
-#[must_use] 
+#[must_use]
 pub fn gray_code(value: &str, direction: &str) -> String {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.chars().any(|c| c != '0' && c != '1') {
@@ -323,7 +325,7 @@ pub fn adc_resolution(bits: i32, vref: &str) -> String {
 }
 
 /// DAC output voltage: Vout = Vref * code / 2^bits.
-#[must_use] 
+#[must_use]
 pub fn dac_output(bits: i32, vref: &str, code: i64) -> String {
     if let Err(e) = check_bit_width(DAC_OUTPUT, bits) {
         return e;
@@ -496,7 +498,7 @@ pub fn timer_555_monostable(r: &str, c: &str) -> String {
 }
 
 /// Convert between frequency and period (reciprocal).
-#[must_use] 
+#[must_use]
 pub fn frequency_period(value: &str, mode: &str) -> String {
     match mode {
         "freqToPeriod" | "periodToFreq" => {}
@@ -521,11 +523,13 @@ pub fn frequency_period(value: &str, mode: &str) -> String {
         );
     }
     let out = div_scaled(&BigDecimal::from(1), &val);
-    Response::ok(FREQUENCY_PERIOD).result(strip_plain(&out)).build()
+    Response::ok(FREQUENCY_PERIOD)
+        .result(strip_plain(&out))
+        .build()
 }
 
 /// Nyquist minimum sampling rate: 2 × bandwidth.
-#[must_use] 
+#[must_use]
 pub fn nyquist_rate(bandwidth_hz: &str) -> String {
     let bw = match parse_bd(NYQUIST_RATE, bandwidth_hz, "bandwidth") {
         Ok(v) => v,
@@ -540,7 +544,9 @@ pub fn nyquist_rate(bandwidth_hz: &str) -> String {
         );
     }
     let min_rate = mul_ctx(&bw, &BigDecimal::from(2));
-    Response::ok(NYQUIST_RATE).result(strip_plain(&min_rate)).build()
+    Response::ok(NYQUIST_RATE)
+        .result(strip_plain(&min_rate))
+        .build()
 }
 
 #[cfg(test)]
@@ -549,18 +555,12 @@ mod tests {
 
     #[test]
     fn convert_base_decimal_to_hex() {
-        assert_eq!(
-            convert_base("255", 10, 16),
-            "CONVERT_BASE: OK | RESULT: FF"
-        );
+        assert_eq!(convert_base("255", 10, 16), "CONVERT_BASE: OK | RESULT: FF");
     }
 
     #[test]
     fn convert_base_binary_to_decimal() {
-        assert_eq!(
-            convert_base("1010", 2, 10),
-            "CONVERT_BASE: OK | RESULT: 10"
-        );
+        assert_eq!(convert_base("1010", 2, 10), "CONVERT_BASE: OK | RESULT: 10");
     }
 
     #[test]
@@ -675,10 +675,7 @@ mod tests {
 
     #[test]
     fn gray_code_to_gray() {
-        assert_eq!(
-            gray_code("1010", "toGray"),
-            "GRAY_CODE: OK | RESULT: 1111"
-        );
+        assert_eq!(gray_code("1010", "toGray"), "GRAY_CODE: OK | RESULT: 1111");
     }
 
     #[test]
@@ -707,42 +704,27 @@ mod tests {
 
     #[test]
     fn bitwise_and_ones() {
-        assert_eq!(
-            bitwise_op("12", "10", "AND"),
-            "BITWISE_OP: OK | RESULT: 8"
-        );
+        assert_eq!(bitwise_op("12", "10", "AND"), "BITWISE_OP: OK | RESULT: 8");
     }
 
     #[test]
     fn bitwise_or_simple() {
-        assert_eq!(
-            bitwise_op("12", "10", "OR"),
-            "BITWISE_OP: OK | RESULT: 14"
-        );
+        assert_eq!(bitwise_op("12", "10", "OR"), "BITWISE_OP: OK | RESULT: 14");
     }
 
     #[test]
     fn bitwise_xor_simple() {
-        assert_eq!(
-            bitwise_op("12", "10", "XOR"),
-            "BITWISE_OP: OK | RESULT: 6"
-        );
+        assert_eq!(bitwise_op("12", "10", "XOR"), "BITWISE_OP: OK | RESULT: 6");
     }
 
     #[test]
     fn bitwise_shl() {
-        assert_eq!(
-            bitwise_op("1", "4", "SHL"),
-            "BITWISE_OP: OK | RESULT: 16"
-        );
+        assert_eq!(bitwise_op("1", "4", "SHL"), "BITWISE_OP: OK | RESULT: 16");
     }
 
     #[test]
     fn bitwise_shr() {
-        assert_eq!(
-            bitwise_op("16", "4", "SHR"),
-            "BITWISE_OP: OK | RESULT: 1"
-        );
+        assert_eq!(bitwise_op("16", "4", "SHR"), "BITWISE_OP: OK | RESULT: 1");
     }
 
     #[test]
@@ -794,7 +776,10 @@ mod tests {
     #[test]
     fn timer_555_astable_all_fields_present() {
         let out = timer_555_astable("1000", "1000", "0.000001");
-        assert!(out.starts_with("TIMER_555_ASTABLE: OK | FREQUENCY: "), "got: {out}");
+        assert!(
+            out.starts_with("TIMER_555_ASTABLE: OK | FREQUENCY: "),
+            "got: {out}"
+        );
         assert!(out.contains(" | PERIOD: "));
         assert!(out.contains(" | DUTY_CYCLE: "));
         assert!(out.contains(" | HIGH_TIME: "));
@@ -885,10 +870,7 @@ mod tests {
 
     #[test]
     fn nyquist_rate_audio() {
-        assert_eq!(
-            nyquist_rate("20000"),
-            "NYQUIST_RATE: OK | RESULT: 40000"
-        );
+        assert_eq!(nyquist_rate("20000"), "NYQUIST_RATE: OK | RESULT: 40000");
     }
 
     #[test]

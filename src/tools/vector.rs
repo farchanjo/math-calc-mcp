@@ -45,7 +45,7 @@ fn ok_result(tool: &str, value: String) -> String {
 }
 
 /// Sum all elements of a numeric array.
-#[must_use] 
+#[must_use]
 pub fn sum_array(numbers: &str) -> String {
     let array = match parse_array(TOOL_SUM_ARRAY, "numbers", numbers) {
         Ok(arr) => arr,
@@ -77,7 +77,7 @@ pub fn sum_array(numbers: &str) -> String {
 }
 
 /// Dot product of two arrays of equal length.
-#[must_use] 
+#[must_use]
 pub fn dot_product(first: &str, second: &str) -> String {
     let array_a = match parse_array(TOOL_DOT_PRODUCT, "first", first) {
         Ok(arr) => arr,
@@ -132,7 +132,7 @@ pub fn dot_product(first: &str, second: &str) -> String {
 }
 
 /// Multiply every element by a scalar, returning the CSV result.
-#[must_use] 
+#[must_use]
 pub fn scale_array(numbers: &str, scalar: &str) -> String {
     let array = match parse_array(TOOL_SCALE_ARRAY, "numbers", numbers) {
         Ok(arr) => arr,
@@ -183,7 +183,7 @@ pub fn scale_array(numbers: &str, scalar: &str) -> String {
 }
 
 /// Euclidean norm (magnitude) of a vector: `sqrt(sum(x²))`.
-#[must_use] 
+#[must_use]
 pub fn magnitude_array(numbers: &str) -> String {
     let array = match parse_array(TOOL_MAGNITUDE_ARRAY, "numbers", numbers) {
         Ok(arr) => arr,
@@ -323,10 +323,7 @@ mod tests {
 
     #[test]
     fn magnitude_array_pythagoras() {
-        assert_eq!(
-            magnitude_array("3,4"),
-            "MAGNITUDE_ARRAY: OK | RESULT: 5.0"
-        );
+        assert_eq!(magnitude_array("3,4"), "MAGNITUDE_ARRAY: OK | RESULT: 5.0");
     }
 
     #[test]

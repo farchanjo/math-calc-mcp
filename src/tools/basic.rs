@@ -41,7 +41,7 @@ fn ok_result(tool: &str, value: &str) -> String {
     Response::ok(tool).result(value).build()
 }
 
-#[must_use] 
+#[must_use]
 pub fn add(first: &str, second: &str) -> String {
     let lhs = match parse_or_error(TOOL_ADD, "first", first) {
         Ok(v) => v,
@@ -54,7 +54,7 @@ pub fn add(first: &str, second: &str) -> String {
     ok_result(TOOL_ADD, &(&lhs + &rhs).to_plain_string())
 }
 
-#[must_use] 
+#[must_use]
 pub fn subtract(first: &str, second: &str) -> String {
     let lhs = match parse_or_error(TOOL_SUBTRACT, "first", first) {
         Ok(v) => v,
@@ -67,7 +67,7 @@ pub fn subtract(first: &str, second: &str) -> String {
     ok_result(TOOL_SUBTRACT, &(&lhs - &rhs).to_plain_string())
 }
 
-#[must_use] 
+#[must_use]
 pub fn multiply(first: &str, second: &str) -> String {
     let lhs = match parse_or_error(TOOL_MULTIPLY, "first", first) {
         Ok(v) => v,
@@ -80,7 +80,7 @@ pub fn multiply(first: &str, second: &str) -> String {
     ok_result(TOOL_MULTIPLY, &(&lhs * &rhs).to_plain_string())
 }
 
-#[must_use] 
+#[must_use]
 pub fn divide(first: &str, second: &str) -> String {
     let dividend = match parse_or_error(TOOL_DIVIDE, "first", first) {
         Ok(v) => v,
@@ -91,13 +91,17 @@ pub fn divide(first: &str, second: &str) -> String {
         Err(e) => return e,
     };
     if divisor.is_zero() {
-        return error(TOOL_DIVIDE, ErrorCode::DivisionByZero, "cannot divide by zero");
+        return error(
+            TOOL_DIVIDE,
+            ErrorCode::DivisionByZero,
+            "cannot divide by zero",
+        );
     }
     let quotient = (&dividend / &divisor).with_scale_round(DIVISION_SCALE, RoundingMode::HalfUp);
     ok_result(TOOL_DIVIDE, &strip_plain(&quotient))
 }
 
-#[must_use] 
+#[must_use]
 pub fn power(base: &str, exponent: &str) -> String {
     let base_value = match parse_or_error(TOOL_POWER, "base", base) {
         Ok(v) => v,
@@ -133,10 +137,13 @@ pub fn power(base: &str, exponent: &str) -> String {
             &format!("estimated_digits={estimated_len}, max={MAX_POWER_RESULT_LEN}"),
         );
     }
-    ok_result(TOOL_POWER, &base_value.powi(i64::from(exp)).to_plain_string())
+    ok_result(
+        TOOL_POWER,
+        &base_value.powi(i64::from(exp)).to_plain_string(),
+    )
 }
 
-#[must_use] 
+#[must_use]
 pub fn modulo(first: &str, second: &str) -> String {
     let dividend = match parse_or_error(TOOL_MODULO, "first", first) {
         Ok(v) => v,
@@ -156,7 +163,7 @@ pub fn modulo(first: &str, second: &str) -> String {
     ok_result(TOOL_MODULO, &(&dividend % &divisor).to_plain_string())
 }
 
-#[must_use] 
+#[must_use]
 pub fn abs(value: &str) -> String {
     match parse_or_error(TOOL_ABS, "value", value) {
         Ok(v) => ok_result(TOOL_ABS, &v.abs().to_plain_string()),
@@ -239,9 +246,7 @@ mod tests {
 
     #[test]
     fn power_non_integer_exponent_rejected() {
-        assert!(
-            power("2", "1.5").starts_with("POWER: ERROR\nREASON: [INVALID_INPUT]"),
-        );
+        assert!(power("2", "1.5").starts_with("POWER: ERROR\nREASON: [INVALID_INPUT]"),);
     }
 
     #[test]

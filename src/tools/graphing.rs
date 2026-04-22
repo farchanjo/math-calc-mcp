@@ -1,4 +1,3 @@
-
 //!
 //! Expression evaluation is delegated to [`crate::engine::expression`],
 
@@ -13,9 +12,7 @@ use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive};
 
 use crate::engine::bigdecimal_ext::DECIMAL128_PRECISION;
 use crate::engine::expression::{ExpressionError, evaluate_with_variables};
-use crate::mcp::message::{
-    ErrorCode, Response, error_with_detail, expression_error_envelope,
-};
+use crate::mcp::message::{ErrorCode, Response, error_with_detail, expression_error_envelope};
 
 const TOOL_PLOT_FUNCTION: &str = "PLOT_FUNCTION";
 const TOOL_SOLVE_EQUATION: &str = "SOLVE_EQUATION";
@@ -33,12 +30,7 @@ fn map_expression_error(tool: &str, err: &ExpressionError) -> String {
     expression_error_envelope(tool, err)
 }
 
-fn eval_at(
-    tool: &str,
-    expression: &str,
-    variable: &str,
-    x: f64,
-) -> Result<f64, String> {
+fn eval_at(tool: &str, expression: &str, variable: &str, x: f64) -> Result<f64, String> {
     let mut vars = HashMap::with_capacity(1);
     vars.insert(variable.to_string(), x);
     evaluate_with_variables(expression, &vars).map_err(|e| map_expression_error(tool, &e))
@@ -69,8 +61,7 @@ fn sample_plot(
 ) -> Result<Vec<(f64, f64)>, String> {
     let bd_min = plot_finite_decimal(tool, "min", min)?;
     let bd_max = plot_finite_decimal(tool, "max", max)?;
-    let step_size =
-        (&bd_max - &bd_min).with_prec(DECIMAL128_PRECISION) / BigDecimal::from(steps);
+    let step_size = (&bd_max - &bd_min).with_prec(DECIMAL128_PRECISION) / BigDecimal::from(steps);
     let capacity = usize::try_from(steps).unwrap_or(0).saturating_add(1);
     let mut rows: Vec<(f64, f64)> = Vec::with_capacity(capacity);
     for idx in 0..=steps {
@@ -123,7 +114,7 @@ pub fn plot_function(expression: &str, variable: &str, min: f64, max: f64, steps
 // --------------------------------------------------------------------------- //
 
 /// Newton-Raphson solver. Returns the root inline or an error envelope.
-#[must_use] 
+#[must_use]
 pub fn solve_equation(expression: &str, variable: &str, initial_guess: f64) -> String {
     let tool = TOOL_SOLVE_EQUATION;
     let mut guess = initial_guess;
@@ -172,7 +163,7 @@ pub fn solve_equation(expression: &str, variable: &str, initial_guess: f64) -> S
 
 /// Scan `[min, max]` in `SCAN_DIVISIONS` slices, detecting sign changes and
 /// already-at-root samples. Refines bracketed intervals with 50 bisection steps.
-#[must_use] 
+#[must_use]
 pub fn find_roots(expression: &str, variable: &str, min: f64, max: f64) -> String {
     let tool = TOOL_FIND_ROOTS;
     if min > max {

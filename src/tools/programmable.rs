@@ -9,9 +9,7 @@ use crate::engine::expression::{
     evaluate as engine_evaluate, evaluate_with_variables as engine_evaluate_with_variables,
 };
 use crate::engine::expression_exact;
-use crate::mcp::message::{
-    ErrorCode, Response, error_with_detail, expression_error_envelope,
-};
+use crate::mcp::message::{ErrorCode, Response, error_with_detail, expression_error_envelope};
 
 const TOOL_EVALUATE: &str = "EVALUATE";
 const TOOL_EVALUATE_WITH_VARIABLES: &str = "EVALUATE_WITH_VARIABLES";
@@ -273,10 +271,7 @@ mod tests {
     #[test]
     fn evaluate_exact_integer_arithmetic() {
         assert_eq!(evaluate_exact("2+3*4"), "EVALUATE_EXACT: OK | RESULT: 14");
-        assert_eq!(
-            evaluate_exact("2^10"),
-            "EVALUATE_EXACT: OK | RESULT: 1024"
-        );
+        assert_eq!(evaluate_exact("2^10"), "EVALUATE_EXACT: OK | RESULT: 1024");
     }
 
     #[test]
@@ -342,10 +337,8 @@ mod tests {
     #[test]
     fn evaluate_exact_vars_string_value_round_trips() {
         // 25-digit variable that would be lossy through f64 — exact path keeps every digit.
-        let out = evaluate_exact_with_variables(
-            "pi * 2",
-            r#"{"pi":"3.1415926535897932384626433"}"#,
-        );
+        let out =
+            evaluate_exact_with_variables("pi * 2", r#"{"pi":"3.1415926535897932384626433"}"#);
         assert!(
             out.starts_with("EVALUATE_EXACT_WITH_VARIABLES: OK | RESULT: 6.2831853071795864769"),
             "got: {out}"

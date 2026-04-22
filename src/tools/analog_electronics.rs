@@ -261,7 +261,7 @@ fn validate_filter_type(tool: &str, filter_type: &str) -> Result<String, String>
 // --- Ohm's law ---
 
 /// Ohm's Law: provide exactly two of V/I/R/P (non-empty) and compute the rest.
-#[must_use] 
+#[must_use]
 pub fn ohms_law(voltage: &str, current: &str, resistance: &str, power: &str) -> String {
     let has_v = is_present(voltage);
     let has_i = is_present(current);
@@ -436,7 +436,7 @@ fn ohms_envelope(values: &OhmsValues) -> String {
 // --- Resistor / Capacitor / Inductor combination ---
 
 /// Resistor combination: series sums, parallel reciprocal-sums.
-#[must_use] 
+#[must_use]
 pub fn resistor_combination(values: &str, mode: &str) -> String {
     match combine(RESISTOR_COMBINATION, values, mode, false) {
         Ok(val) => Response::ok(RESISTOR_COMBINATION)
@@ -447,7 +447,7 @@ pub fn resistor_combination(values: &str, mode: &str) -> String {
 }
 
 /// Capacitor combination: series reciprocal-sums, parallel sums (reversed from R/L).
-#[must_use] 
+#[must_use]
 pub fn capacitor_combination(values: &str, mode: &str) -> String {
     match combine(CAPACITOR_COMBINATION, values, mode, true) {
         Ok(val) => Response::ok(CAPACITOR_COMBINATION)
@@ -458,7 +458,7 @@ pub fn capacitor_combination(values: &str, mode: &str) -> String {
 }
 
 /// Inductor combination: same as resistor (series sums, parallel reciprocal-sums).
-#[must_use] 
+#[must_use]
 pub fn inductor_combination(values: &str, mode: &str) -> String {
     match combine(INDUCTOR_COMBINATION, values, mode, false) {
         Ok(val) => Response::ok(INDUCTOR_COMBINATION)
@@ -592,7 +592,7 @@ pub fn current_divider(total_current: &str, r1: &str, r2: &str) -> String {
 // --- Time constants ---
 
 /// RC time constant and cutoff frequency.
-#[must_use] 
+#[must_use]
 pub fn rc_time_constant(resistance: &str, capacitance: &str) -> String {
     let r = match parse_bd(RC_TIME_CONSTANT, resistance, "resistance") {
         Ok(v) => v,
@@ -618,7 +618,7 @@ pub fn rc_time_constant(resistance: &str, capacitance: &str) -> String {
 }
 
 /// RL time constant and cutoff frequency.
-#[must_use] 
+#[must_use]
 pub fn rl_time_constant(resistance: &str, inductance: &str) -> String {
     let r = match parse_bd(RL_TIME_CONSTANT, resistance, "resistance") {
         Ok(v) => v,
@@ -771,14 +771,16 @@ pub fn impedance(r: &str, l: &str, c: &str, frequency: &str) -> String {
 // --- Decibel ---
 
 /// Decibel conversion: `powerToDb`, `voltageToDb`, `dbToPower`, `dbToVoltage`.
-#[must_use] 
+#[must_use]
 pub fn decibel_convert(value: &str, mode: &str) -> String {
     let val = match parse_bd(DECIBEL_CONVERT, value, "value") {
         Ok(v) => v,
         Err(e) => return e,
     };
     match compute_decibel(&val, mode) {
-        Ok(out) => Response::ok(DECIBEL_CONVERT).result(strip_plain(&out)).build(),
+        Ok(out) => Response::ok(DECIBEL_CONVERT)
+            .result(strip_plain(&out))
+            .build(),
         Err(e) => e,
     }
 }
@@ -815,7 +817,7 @@ fn compute_decibel(val: &BigDecimal, mode: &str) -> Result<BigDecimal, String> {
 // --- Filter cutoff ---
 
 /// RC filter cutoff frequency. fc = 1 / (2π R C).
-#[must_use] 
+#[must_use]
 pub fn filter_cutoff(resistance: &str, reactive: &str, filter_type: &str) -> String {
     let r = match parse_bd(FILTER_CUTOFF, resistance, "resistance") {
         Ok(v) => v,
@@ -847,7 +849,7 @@ pub fn filter_cutoff(resistance: &str, reactive: &str, filter_type: &str) -> Str
 // --- LED / Wheatstone ---
 
 /// LED current-limiting resistor: R = (Vs - Vf) / If.
-#[must_use] 
+#[must_use]
 pub fn led_resistor(vs: &str, vf: &str, i_f: &str) -> String {
     let supply = match parse_bd(LED_RESISTOR, vs, "supply_voltage") {
         Ok(v) => v,
@@ -901,7 +903,7 @@ pub fn led_resistor(vs: &str, vf: &str, i_f: &str) -> String {
 }
 
 /// Wheatstone bridge balance resistor: R4 = R3 * R2 / R1.
-#[must_use] 
+#[must_use]
 pub fn wheatstone_bridge(r1: &str, r2: &str, r3: &str) -> String {
     let r1_v = match parse_bd(WHEATSTONE_BRIDGE, r1, "r1") {
         Ok(v) => v,
@@ -1225,10 +1227,7 @@ mod tests {
     fn impedance_near_resonance_magnitude_matches_r() {
         // Pick R=10, L=1e-3, C=1e-6 — at f ≈ 5032.92 Hz, X_L=X_C → mag=R=10, phase≈0
         let out = impedance("10", "0.001", "0.000001", "5032.9216");
-        assert!(
-            out.starts_with("IMPEDANCE: OK | MAGNITUDE: "),
-            "got: {out}"
-        );
+        assert!(out.starts_with("IMPEDANCE: OK | MAGNITUDE: "), "got: {out}");
         // Extract MAGNITUDE token.
         let after = out.strip_prefix("IMPEDANCE: OK | MAGNITUDE: ").unwrap();
         let end = after.find(" | ").unwrap();

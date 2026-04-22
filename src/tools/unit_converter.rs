@@ -1,4 +1,3 @@
-
 //! category validation and auto-detection.
 //!
 //! All public functions return `String` using the response envelope: inline
@@ -141,8 +140,7 @@ pub fn convert_auto_detect(value: &str, from_unit: &str, to_unit: &str) -> Strin
         Err(msg) => return msg,
     };
     if let Some(def) = unit_registry::find_unit(from_unit)
-        && let Err(msg) =
-            reject_if_negative(TOOL_CONVERT_AUTO_DETECT, &parsed, value, def.category)
+        && let Err(msg) = reject_if_negative(TOOL_CONVERT_AUTO_DETECT, &parsed, value, def.category)
     {
         return msg;
     }

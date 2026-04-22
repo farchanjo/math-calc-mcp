@@ -39,13 +39,13 @@ pub static LN2_RECIPROCAL: LazyLock<BigDecimal> = LazyLock::new(|| {
 ///
 /// Matches Java `value.stripTrailingZeros().toPlainString()` except that a pure
 /// integer result is printed without a trailing `.0`.
-#[must_use] 
+#[must_use]
 pub fn strip_plain(value: &BigDecimal) -> String {
     value.normalized().to_plain_string()
 }
 
 /// True iff the value is exactly zero.
-#[must_use] 
+#[must_use]
 pub fn is_zero(value: &BigDecimal) -> bool {
     use num_traits::Zero;
     value.is_zero()
