@@ -1,10 +1,8 @@
 <div align="center">
 
-![arithma logo](arithma-logo.svg)
-
 # arithma
 
-### The Ultimate LLM Calculator Engine
+**The Ultimate LLM Calculator Engine**
 
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -19,13 +17,22 @@
 
 ```mermaid
 graph LR
-    A["LLM<br/>Claude/GPT/etc"] -->|calls tools| B["arithma"]
-    B -->|87 tools| C["Math"]
-    B -->|""|D["Finance"]
-    B -->|""|E["Electronics"]
-    B -->|""|F["Networks"]
-    B -->|""|G["Units"]
-    C -->|"BigDecimal<br/>StrictMath"| H["Precision Results"]
+    A["LLM<br/>Claude/GPT/etc"]
+    B["arithma<br/>87 Tools"]
+    C["Math"]
+    D["Finance"]
+    E["Electronics"]
+    F["Networks"]
+    G["Units"]
+    H["Precision<br/>Results"]
+    
+    A -->|calls| B
+    B --> C
+    B --> D
+    B --> E
+    B --> F
+    B --> G
+    C --> H
     D --> H
     E --> H
     F --> H
