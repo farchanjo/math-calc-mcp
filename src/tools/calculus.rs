@@ -213,6 +213,18 @@ pub fn definite_integral(expression: &str, variable: &str, lower: f64, upper: f6
             }
             Response::ok(tool).result(format_f64(value)).build()
         }
+        Err(ExpressionError::DivisionByZero | ExpressionError::DomainError { .. }) => {
+            // A sample within the quadrature hit a pole (classic `1/x` on an
+            // interval containing 0). Reframe as an improper-integral error
+            // rather than surfacing the raw divide-by-zero, which reads like
+            // a user input bug.
+            error_with_detail(
+                tool,
+                ErrorCode::DomainError,
+                "integrand has a singularity within the interval",
+                &format!("lower={lower}, upper={upper}"),
+            )
+        }
         Err(err) => map_expression_error(tool, &err),
     }
 }
@@ -416,12 +428,14 @@ mod tests {
         // Regression: `1/x` on [-1, 1] crosses x=0. Simpson's rule samples
         // x=0 exactly (10 000 even-numbered intervals), which triggers the
         // expression evaluator's division-by-zero guard. Previously returned
-        // `RESULT: inf`.
+        // `RESULT: inf`; now surfaces as DOMAIN_ERROR with a clear message
+        // about the improper integral rather than the raw DIVISION_BY_ZERO.
         let out = definite_integral("1/x", "x", -1.0, 1.0);
         assert!(
-            out.starts_with("DEFINITE_INTEGRAL: ERROR\nREASON: ["),
+            out.starts_with("DEFINITE_INTEGRAL: ERROR\nREASON: [DOMAIN_ERROR]"),
             "got {out}"
         );
+        assert!(out.contains("singularity within the interval"), "got {out}");
     }
 
     // ---- tangent_line ----

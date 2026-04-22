@@ -202,10 +202,26 @@ pub fn matrix_determinant(a: &str) -> String {
             &format!("dim={}x{}", m.rows, m.cols),
         );
     }
-    let det = compute_det(m.data);
+    let scale = matrix_frobenius_norm(&m.data);
+    let det_raw = compute_det(m.data);
+    // Snap near-zero determinants to exact zero. The Gaussian-elimination
+    // path returns FP noise (e.g. 6.66e-16) for rank-deficient integer
+    // matrices like [[1,2,3],[4,5,6],[7,8,9]] whose true determinant is 0.
+    // Use a threshold proportional to the matrix's Frobenius norm so well-
+    // scaled "genuinely small" determinants are not clipped.
+    let det = if det_raw.abs() < scale.max(1.0) * 1e-12 {
+        0.0
+    } else {
+        det_raw
+    };
     Response::ok(TOOL_MATRIX_DETERMINANT)
         .result(fmt(det))
         .build()
+}
+
+fn matrix_frobenius_norm(data: &[Vec<f64>]) -> f64 {
+    let sum_sq: f64 = data.iter().flat_map(|row| row.iter()).map(|v| v * v).sum();
+    sum_sq.sqrt()
 }
 
 /// LU-style determinant via partial-pivoted Gaussian elimination on a clone.
@@ -612,6 +628,24 @@ mod tests {
     fn determinant_singular() {
         // Two identical rows → det = 0
         approx_field(&matrix_determinant("1,2;1,2"), "RESULT", 0.0);
+    }
+
+    #[test]
+    fn determinant_singular_fp_noise_snaps_to_zero() {
+        // [[1,2,3],[4,5,6],[7,8,9]] is rank-deficient (R3 = 2*R2 - R1).
+        // Gaussian elimination returns FP residue (~6.66e-16); the threshold
+        // must snap it to exact 0 so the output is unambiguous.
+        let out = matrix_determinant("1,2,3;4,5,6;7,8,9");
+        assert!(out.contains("RESULT: 0.0") || out.contains("RESULT: 0"));
+    }
+
+    #[test]
+    fn determinant_truly_small_not_clipped() {
+        // A diagonal matrix with tiny but well-conditioned entries must not be
+        // collapsed to zero — the scale-relative threshold protects it.
+        let out = matrix_determinant("1e-5,0;0,1e-5");
+        // expected 1e-10; must not be clipped.
+        assert!(out.contains("e-10"), "got {out}");
     }
 
     #[test]

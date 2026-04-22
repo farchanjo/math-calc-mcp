@@ -231,16 +231,15 @@ pub fn complex_phase(z: &str) -> String {
         Ok(v) => v,
         Err(e) => return e,
     };
-    if zv.re == 0.0 && zv.im == 0.0 {
-        return error(
-            TOOL_COMPLEX_PHASE,
-            ErrorCode::DomainError,
-            "phase of 0 is undefined",
-        );
-    }
-    Response::ok(TOOL_COMPLEX_PHASE)
-        .result(fmt(zv.phase_deg()))
-        .build()
+    // The phase of 0+0i is mathematically undefined. Python's `cmath.phase(0)`,
+    // numpy, and this crate's own `rect_to_polar(0,0)` all return 0 by
+    // convention, so match that to keep the complex-tool surface consistent.
+    let theta = if zv.re == 0.0 && zv.im == 0.0 {
+        0.0
+    } else {
+        zv.phase_deg()
+    };
+    Response::ok(TOOL_COMPLEX_PHASE).result(fmt(theta)).build()
 }
 
 /// Polar `(magnitude, angleDegrees)` → rectangular `(real, imag)`.
@@ -393,6 +392,13 @@ mod tests {
     fn phase_negative_real_is_180() {
         let out = complex_phase("-1,0");
         assert!(out.contains("RESULT: 180.0"), "got {out}");
+    }
+
+    #[test]
+    fn phase_of_zero_is_zero_by_convention() {
+        // Consistent with rect_to_polar(0,0) and Python cmath.phase(0j).
+        let out = complex_phase("0,0");
+        assert!(out.contains("RESULT: 0.0"), "got {out}");
     }
 
     #[test]
