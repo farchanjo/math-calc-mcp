@@ -675,6 +675,38 @@ pub fn impedance(r: &str, l: &str, c: &str, frequency: &str) -> String {
         Ok(v) => v,
         Err(e) => return e,
     };
+    if f.is_zero() || f.is_negative() {
+        return error_with_detail(
+            IMPEDANCE,
+            ErrorCode::InvalidInput,
+            "frequency must be positive",
+            &format!("frequency={frequency}"),
+        );
+    }
+    if r_v.is_negative() {
+        return error_with_detail(
+            IMPEDANCE,
+            ErrorCode::InvalidInput,
+            "resistance must not be negative",
+            &format!("resistance={r}"),
+        );
+    }
+    if l_v.is_negative() {
+        return error_with_detail(
+            IMPEDANCE,
+            ErrorCode::InvalidInput,
+            "inductance must not be negative",
+            &format!("inductance={l}"),
+        );
+    }
+    if c_v.is_zero() || c_v.is_negative() {
+        return error_with_detail(
+            IMPEDANCE,
+            ErrorCode::InvalidInput,
+            "capacitance must be positive",
+            &format!("capacitance={c}"),
+        );
+    }
     let omega = mul_ctx(&TWO_PI, &f);
     let x_l = mul_ctx(&omega, &l_v);
     let omega_c = mul_ctx(&omega, &c_v);
@@ -1089,6 +1121,30 @@ mod tests {
         assert_eq!(
             filter_cutoff("1000", "0.000001", "bandstop"),
             "FILTER_CUTOFF: ERROR\nREASON: [INVALID_INPUT] filter type must be 'lowpass' or 'highpass'\nDETAIL: filter=bandstop"
+        );
+    }
+
+    #[test]
+    fn impedance_rejects_negative_frequency() {
+        assert_eq!(
+            impedance("10", "0.001", "0.000001", "-1000"),
+            "IMPEDANCE: ERROR\nREASON: [INVALID_INPUT] frequency must be positive\nDETAIL: frequency=-1000"
+        );
+    }
+
+    #[test]
+    fn impedance_rejects_zero_frequency() {
+        assert_eq!(
+            impedance("10", "0.001", "0.000001", "0"),
+            "IMPEDANCE: ERROR\nREASON: [INVALID_INPUT] frequency must be positive\nDETAIL: frequency=0"
+        );
+    }
+
+    #[test]
+    fn impedance_rejects_negative_capacitance() {
+        assert_eq!(
+            impedance("10", "0.001", "-0.000001", "100"),
+            "IMPEDANCE: ERROR\nREASON: [INVALID_INPUT] capacitance must be positive\nDETAIL: capacitance=-0.000001"
         );
     }
 
