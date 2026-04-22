@@ -572,7 +572,7 @@ def test_graphing(r: TestRunner) -> None:
 
 
 def test_network(r: TestRunner) -> None:
-    r.category("network", 16)
+    r.category("network", 22)
     c = r.client.call
 
     subnet = c("subnetCalculator", {"address": "192.168.1.0", "cidr": 24})
@@ -667,9 +667,43 @@ def test_network(r: TestRunner) -> None:
             lambda v: envelope_ok(v, "TCP_THROUGHPUT")
             and float(envelope_field(v, "RATE_MBPS") or 0) > 0)
 
+    # Regression: transferTime must reject negative/zero physical inputs
+    r.check("transferTime", "negative fileSize -> INVALID_INPUT",
+            c("transferTime", {"fileSize": "-1", "fileSizeUnit": "gb",
+                               "bandwidth": "100", "bandwidthUnit": "mbps"}),
+            lambda v: envelope_error(v, "TRANSFER_TIME", "INVALID_INPUT")
+                      and "file size must not be negative" in (envelope_field(v, "REASON") or ""))
+    r.check("transferTime", "negative bandwidth -> INVALID_INPUT",
+            c("transferTime", {"fileSize": "1", "fileSizeUnit": "gb",
+                               "bandwidth": "-100", "bandwidthUnit": "mbps"}),
+            lambda v: envelope_error(v, "TRANSFER_TIME", "INVALID_INPUT")
+                      and "bandwidth must be positive" in (envelope_field(v, "REASON") or ""))
+    r.check("transferTime", "zero bandwidth -> INVALID_INPUT",
+            c("transferTime", {"fileSize": "1", "fileSizeUnit": "gb",
+                               "bandwidth": "0", "bandwidthUnit": "mbps"}),
+            lambda v: envelope_error(v, "TRANSFER_TIME", "INVALID_INPUT")
+                      and "bandwidth must be positive" in (envelope_field(v, "REASON") or ""))
+
+    # Regression: throughput must reject negative/zero physical inputs
+    r.check("throughput", "negative dataSize -> INVALID_INPUT",
+            c("throughput", {"dataSize": "-500", "dataSizeUnit": "mb",
+                             "time": "10", "timeUnit": "s", "outputUnit": "mbps"}),
+            lambda v: envelope_error(v, "THROUGHPUT", "INVALID_INPUT")
+                      and "data size must not be negative" in (envelope_field(v, "REASON") or ""))
+    r.check("throughput", "negative time -> INVALID_INPUT",
+            c("throughput", {"dataSize": "500", "dataSizeUnit": "mb",
+                             "time": "-10", "timeUnit": "s", "outputUnit": "mbps"}),
+            lambda v: envelope_error(v, "THROUGHPUT", "INVALID_INPUT")
+                      and "time must be positive" in (envelope_field(v, "REASON") or ""))
+    r.check("throughput", "zero time -> INVALID_INPUT",
+            c("throughput", {"dataSize": "500", "dataSizeUnit": "mb",
+                             "time": "0", "timeUnit": "s", "outputUnit": "mbps"}),
+            lambda v: envelope_error(v, "THROUGHPUT", "INVALID_INPUT")
+                      and "time must be positive" in (envelope_field(v, "REASON") or ""))
+
 
 def test_analog(r: TestRunner) -> None:
-    r.category("analog electronics", 16)
+    r.category("analog electronics", 26)
     c = r.client.call
 
     # Regression: physical positivity invariants on R/C must be enforced
@@ -766,6 +800,54 @@ def test_analog(r: TestRunner) -> None:
     wh = c("wheatstoneBridge", {"r1": "100", "r2": "200", "r3": "300"})
     r.check("wheatstoneBridge", "R1=100 R2=200 R3=300", wh,
             lambda v: TestRunner.close(envelope_result(v, "WHEATSTONE_BRIDGE"), 600.0, 1e-4))
+
+    # Regression: voltageDivider must reject negative resistances
+    r.check("voltageDivider", "negative r1 -> INVALID_INPUT",
+            c("voltageDivider", {"vin": "10", "r1": "-100", "r2": "50"}),
+            lambda v: envelope_error(v, "VOLTAGE_DIVIDER", "INVALID_INPUT")
+                      and envelope_field(v, "DETAIL") == "r1=-100")
+    r.check("voltageDivider", "negative r2 -> INVALID_INPUT",
+            c("voltageDivider", {"vin": "10", "r1": "100", "r2": "-50"}),
+            lambda v: envelope_error(v, "VOLTAGE_DIVIDER", "INVALID_INPUT")
+                      and envelope_field(v, "DETAIL") == "r2=-50")
+
+    # Regression: currentDivider must reject negative resistances
+    r.check("currentDivider", "negative r1 -> INVALID_INPUT",
+            c("currentDivider", {"totalCurrent": "5", "r1": "-100", "r2": "50"}),
+            lambda v: envelope_error(v, "CURRENT_DIVIDER", "INVALID_INPUT")
+                      and envelope_field(v, "DETAIL") == "r1=-100")
+    r.check("currentDivider", "negative r2 -> INVALID_INPUT",
+            c("currentDivider", {"totalCurrent": "5", "r1": "100", "r2": "-50"}),
+            lambda v: envelope_error(v, "CURRENT_DIVIDER", "INVALID_INPUT")
+                      and envelope_field(v, "DETAIL") == "r2=-50")
+
+    # Regression: rlcResonance must reject non-positive R, L, C
+    r.check("rlcResonance", "negative r -> INVALID_INPUT",
+            c("rlcResonance", {"r": "-10", "l": "0.001", "c": "0.000001"}),
+            lambda v: envelope_error(v, "RLC_RESONANCE", "INVALID_INPUT")
+                      and envelope_field(v, "DETAIL") == "resistance=-10")
+    r.check("rlcResonance", "zero inductance -> INVALID_INPUT",
+            c("rlcResonance", {"r": "10", "l": "0", "c": "0.000001"}),
+            lambda v: envelope_error(v, "RLC_RESONANCE", "INVALID_INPUT")
+                      and envelope_field(v, "DETAIL") == "inductance=0")
+    r.check("rlcResonance", "negative capacitance -> INVALID_INPUT",
+            c("rlcResonance", {"r": "10", "l": "0.001", "c": "-0.000001"}),
+            lambda v: envelope_error(v, "RLC_RESONANCE", "INVALID_INPUT")
+                      and envelope_field(v, "DETAIL") == "capacitance=-0.000001")
+
+    # Regression: wheatstoneBridge must reject negative resistances
+    r.check("wheatstoneBridge", "negative r1 -> INVALID_INPUT",
+            c("wheatstoneBridge", {"r1": "-100", "r2": "200", "r3": "300"}),
+            lambda v: envelope_error(v, "WHEATSTONE_BRIDGE", "INVALID_INPUT")
+                      and envelope_field(v, "DETAIL") == "r1=-100")
+    r.check("wheatstoneBridge", "negative r2 -> INVALID_INPUT",
+            c("wheatstoneBridge", {"r1": "100", "r2": "-200", "r3": "300"}),
+            lambda v: envelope_error(v, "WHEATSTONE_BRIDGE", "INVALID_INPUT")
+                      and envelope_field(v, "DETAIL") == "r2=-200")
+    r.check("wheatstoneBridge", "negative r3 -> INVALID_INPUT",
+            c("wheatstoneBridge", {"r1": "100", "r2": "200", "r3": "-300"}),
+            lambda v: envelope_error(v, "WHEATSTONE_BRIDGE", "INVALID_INPUT")
+                      and envelope_field(v, "DETAIL") == "r3=-300")
 
 
 def test_digital(r: TestRunner) -> None:
