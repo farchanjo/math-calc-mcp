@@ -959,6 +959,22 @@ fn compute_transfer_time(
         Ok(v) => v,
         Err(e) => return e,
     };
+    if size_value.is_negative() {
+        return error_with_detail(
+            TRANSFER_TIME,
+            ErrorCode::InvalidInput,
+            "file size must not be negative",
+            &format!("fileSize={file_size}"),
+        );
+    }
+    if bandwidth_value.is_zero() || bandwidth_value.is_negative() {
+        return error_with_detail(
+            TRANSFER_TIME,
+            ErrorCode::InvalidInput,
+            "bandwidth must be positive",
+            &format!("bandwidth={bandwidth}"),
+        );
+    }
 
     let size_bytes = match unit_convert_for(TRANSFER_TIME, &size_value, &size_unit, "byte") {
         Ok(v) => v,
@@ -1024,6 +1040,22 @@ fn compute_throughput(
         Ok(v) => v,
         Err(e) => return e,
     };
+    if size_value.is_negative() {
+        return error_with_detail(
+            THROUGHPUT,
+            ErrorCode::InvalidInput,
+            "data size must not be negative",
+            &format!("dataSize={data_size}"),
+        );
+    }
+    if time_value.is_zero() || time_value.is_negative() {
+        return error_with_detail(
+            THROUGHPUT,
+            ErrorCode::InvalidInput,
+            "time must be positive",
+            &format!("time={time}"),
+        );
+    }
 
     let size_bytes = match unit_convert_for(THROUGHPUT, &size_value, &size_unit, "byte") {
         Ok(v) => v,
@@ -1472,5 +1504,53 @@ mod tests {
             binary_to_ip("1010.1010"),
             "BINARY_TO_IP: ERROR\nREASON: [INVALID_INPUT] expected 4 dot-separated 8-bit groups\nDETAIL: binary=1010.1010"
         );
+    }
+
+    #[test]
+    fn transfer_time_rejects_negative_file_size() {
+        let out = transfer_time("-1", "gb", "100", "mbps");
+        assert!(out.contains("TRANSFER_TIME: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("file size must not be negative"));
+    }
+
+    #[test]
+    fn transfer_time_rejects_negative_bandwidth() {
+        let out = transfer_time("1", "gb", "-100", "mbps");
+        assert!(out.contains("TRANSFER_TIME: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("bandwidth must be positive"));
+    }
+
+    #[test]
+    fn transfer_time_rejects_zero_bandwidth() {
+        let out = transfer_time("1", "gb", "0", "mbps");
+        assert!(out.contains("TRANSFER_TIME: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("bandwidth must be positive"));
+    }
+
+    #[test]
+    fn throughput_rejects_negative_data_size() {
+        let out = throughput("-500", "mb", "10", "s", "mbps");
+        assert!(out.contains("THROUGHPUT: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("data size must not be negative"));
+    }
+
+    #[test]
+    fn throughput_rejects_negative_time() {
+        let out = throughput("500", "mb", "-10", "s", "mbps");
+        assert!(out.contains("THROUGHPUT: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("time must be positive"));
+    }
+
+    #[test]
+    fn throughput_rejects_zero_time() {
+        let out = throughput("500", "mb", "0", "s", "mbps");
+        assert!(out.contains("THROUGHPUT: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("time must be positive"));
     }
 }
