@@ -526,7 +526,7 @@ fn reciprocal_sum(tool: &str, values: &[BigDecimal]) -> Result<BigDecimal, Strin
 // --- Dividers ---
 
 /// Voltage divider: Vout = Vin * R2 / (R1 + R2).
-#[must_use] 
+#[must_use]
 pub fn voltage_divider(vin: &str, r1: &str, r2: &str) -> String {
     let vin_v = match parse_bd(VOLTAGE_DIVIDER, vin, "vin") {
         Ok(v) => v,
@@ -540,6 +540,9 @@ pub fn voltage_divider(vin: &str, r1: &str, r2: &str) -> String {
         Ok(v) => v,
         Err(e) => return e,
     };
+    if let Err(e) = non_negative(VOLTAGE_DIVIDER, &vin_v, "vin") {
+        return e;
+    }
     if let Err(e) = positive(VOLTAGE_DIVIDER, &r1_v, "r1") {
         return e;
     }
@@ -554,9 +557,9 @@ pub fn voltage_divider(vin: &str, r1: &str, r2: &str) -> String {
 }
 
 /// Current divider: I1 = It*R2/(R1+R2), I2 = It*R1/(R1+R2).
-#[must_use] 
+#[must_use]
 pub fn current_divider(total_current: &str, r1: &str, r2: &str) -> String {
-    let it = match parse_bd(CURRENT_DIVIDER, total_current, "total_current") {
+    let it = match parse_bd(CURRENT_DIVIDER, total_current, "totalCurrent") {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -568,6 +571,9 @@ pub fn current_divider(total_current: &str, r1: &str, r2: &str) -> String {
         Ok(v) => v,
         Err(e) => return e,
     };
+    if let Err(e) = non_negative(CURRENT_DIVIDER, &it, "totalCurrent") {
+        return e;
+    }
     if let Err(e) = positive(CURRENT_DIVIDER, &r1_v, "r1") {
         return e;
     }
@@ -1424,5 +1430,37 @@ mod tests {
         assert!(out.contains("WHEATSTONE_BRIDGE: ERROR"));
         assert!(out.contains("INVALID_INPUT"));
         assert!(out.contains("r3 must not be negative"));
+    }
+
+    #[test]
+    fn voltage_divider_rejects_negative_vin() {
+        // Regression: Vin=-12 used to silently produce Vout=-6 V.
+        let out = voltage_divider("-12", "1000", "1000");
+        assert!(out.contains("VOLTAGE_DIVIDER: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("vin must not be negative"));
+    }
+
+    #[test]
+    fn voltage_divider_accepts_zero_vin() {
+        // Zero input voltage is still physically valid — output is zero.
+        let out = voltage_divider("0", "1000", "1000");
+        assert!(out.contains("VOLTAGE_DIVIDER: OK"));
+        assert!(out.contains("VOUT: 0"));
+    }
+
+    #[test]
+    fn current_divider_rejects_negative_total_current() {
+        // Regression: I_total=-1 used to produce I1=-0.5, I2=-0.5 silently.
+        let out = current_divider("-1", "1000", "1000");
+        assert!(out.contains("CURRENT_DIVIDER: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("totalCurrent must not be negative"));
+    }
+
+    #[test]
+    fn current_divider_accepts_zero_total_current() {
+        let out = current_divider("0", "1000", "1000");
+        assert!(out.contains("CURRENT_DIVIDER: OK"));
     }
 }
