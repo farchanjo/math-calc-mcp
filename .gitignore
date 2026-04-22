@@ -64,3 +64,4 @@ Desktop.ini
 # Project-specific
 .claude/
 *.mmdc-generated.svg
+.cargo/
