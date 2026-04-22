@@ -85,6 +85,18 @@ fn map_registry_error(tool: &str, from_unit: &str, to_unit: &str, err: &UnitErro
             "units are not in the same category",
             &format!("from={from_unit}, to={to_unit}"),
         ),
+        UnitError::BelowAbsoluteZero { unit, value } => error_with_detail(
+            tool,
+            ErrorCode::DomainError,
+            "temperature is below absolute zero",
+            &format!("unit={unit}, value={value}"),
+        ),
+        UnitError::CelsiusOutsideGasMarkRange { value } => error_with_detail(
+            tool,
+            ErrorCode::OutOfRange,
+            "Celsius is outside the gas-mark range (100–280°C buffer)",
+            &format!("celsius={value}"),
+        ),
         other => error(tool, ErrorCode::InvalidInput, &other.to_string()),
     }
 }

@@ -96,11 +96,31 @@ pub fn projectile_motion(speed: &str, angle_degrees: &str, gravity: &str) -> Str
             &format!("speed={v}, gravity={g}"),
         );
     }
+    if !(0.0..=90.0).contains(&theta) {
+        // Ballistic projectile is parameterised by a launch angle above the
+        // horizontal; angles outside [0°, 90°] produce negative time of
+        // flight or mirror symmetric cases. Reject to avoid silent nonsense.
+        return error_with_detail(
+            TOOL_PROJECTILE_MOTION,
+            ErrorCode::DomainError,
+            "angle must be in [0, 90] degrees",
+            &format!("angleDegrees={theta}"),
+        );
+    }
     let rad = theta.to_radians();
     let vx = v * rad.cos();
     let vy = v * rad.sin();
     let t_flight = 2.0 * vy / g;
-    let range = vx * t_flight;
+    let range_raw = vx * t_flight;
+    // sin(180°) is 1.22e-16 in f64, so the nominal range at θ=90° leaks FP
+    // noise like 1.25e-15 instead of the physically exact 0. Clamp anything
+    // below a quarter-ulp of the inputs to 0 so "vertical launch" reports 0.
+    let range_floor = (v * v / g) * f64::EPSILON * 8.0;
+    let range = if range_raw.abs() <= range_floor {
+        0.0
+    } else {
+        range_raw
+    };
     let peak = vy * vy / (2.0 * g);
     Response::ok(TOOL_PROJECTILE_MOTION)
         .field("RANGE", fmt(range))
@@ -753,5 +773,25 @@ mod tests {
         let out = ideal_gas_law("100", "1", "-1", "300", "P");
         assert!(out.starts_with("IDEAL_GAS_LAW: ERROR"));
         assert!(out.contains("moles must be non-negative"));
+    }
+
+    #[test]
+    fn projectile_rejects_negative_angle() {
+        let out = projectile_motion("10", "-45", "9.81");
+        assert!(out.starts_with("PROJECTILE_MOTION: ERROR"));
+        assert!(out.contains("angle must be in [0, 90]"));
+    }
+
+    #[test]
+    fn projectile_rejects_angle_above_90() {
+        let out = projectile_motion("10", "120", "9.81");
+        assert!(out.starts_with("PROJECTILE_MOTION: ERROR"));
+    }
+
+    #[test]
+    fn projectile_vertical_launch_zero_range() {
+        // At 90° the projectile goes straight up — range must be exactly 0.
+        let out = projectile_motion("10", "90", "9.81");
+        assert!(out.contains("RANGE: 0.0"), "got {out}");
     }
 }

@@ -50,6 +50,12 @@ pub enum UnitError {
     #[error("Gas mark must be 1-10. Received: {0}")]
     InvalidGasMark(i32),
 
+    #[error("{unit} value {value} is below absolute zero")]
+    BelowAbsoluteZero { unit: String, value: String },
+
+    #[error("Celsius value {value} is outside the gas-mark range (140–260°C)")]
+    CelsiusOutsideGasMarkRange { value: String },
+
     #[error("Unit '{code}' is not in category {category}")]
     WrongCategory { code: String, category: String },
 
@@ -862,14 +868,47 @@ pub fn explain_conversion(from: &str, to: &str) -> Result<String, UnitError> {
 /// `c`, `f`, `k`, or `r`.
 pub fn to_celsius(code: &str, value: &BigDecimal) -> Result<BigDecimal, UnitError> {
     match normalize(code).as_str() {
-        "c" => Ok(value.clone()),
+        "c" => {
+            // Celsius below -273.15 would map to negative Kelvin — reject so
+            // downstream conversions to K/R don't silently produce nonsense.
+            let min_c = sub(&BigDecimal::from(0), &KELVIN_OFFSET);
+            if value < &min_c {
+                return Err(UnitError::BelowAbsoluteZero {
+                    unit: "c".to_string(),
+                    value: strip_plain(value),
+                });
+            }
+            Ok(value.clone())
+        }
         "f" => {
             let shifted = sub(value, &THIRTY_TWO);
             let scaled = mul(&shifted, &FIVE);
-            Ok(div_scale(&scaled, &NINE))
+            let celsius = div_scale(&scaled, &NINE);
+            let min_c = sub(&BigDecimal::from(0), &KELVIN_OFFSET);
+            if celsius < min_c {
+                return Err(UnitError::BelowAbsoluteZero {
+                    unit: "f".to_string(),
+                    value: strip_plain(value),
+                });
+            }
+            Ok(celsius)
         }
-        "k" => Ok(sub(value, &KELVIN_OFFSET)),
+        "k" => {
+            if value < &BigDecimal::from(0) {
+                return Err(UnitError::BelowAbsoluteZero {
+                    unit: "k".to_string(),
+                    value: strip_plain(value),
+                });
+            }
+            Ok(sub(value, &KELVIN_OFFSET))
+        }
         "r" => {
+            if value < &BigDecimal::from(0) {
+                return Err(UnitError::BelowAbsoluteZero {
+                    unit: "r".to_string(),
+                    value: strip_plain(value),
+                });
+            }
             let shifted = sub(value, &RANKINE_OFFSET);
             Ok(mul(&shifted, &RANKINE_RATIO))
         }
@@ -918,9 +957,18 @@ pub fn gas_mark_to_celsius(mark: i32) -> Result<BigDecimal, UnitError> {
 /// with the smallest absolute distance, preferring earlier entries on ties.
 ///
 /// # Errors
-/// Never returns an error today but the result type is preserved for parity
-/// with future extensions.
+/// [`UnitError::CelsiusOutsideGasMarkRange`] when `celsius` lies outside
+/// 100–280°C (a 40°C buffer around the 140–260°C nominal gas-mark range).
+/// Outside that buffer the nearest-mark heuristic would silently return
+/// mark 1 or mark 10 for obviously invalid inputs (e.g. -200°C).
 pub fn celsius_to_gas_mark(celsius: &BigDecimal) -> Result<i32, UnitError> {
+    let lower_bound = bd("100");
+    let upper_bound = bd("280");
+    if celsius < &lower_bound || celsius > &upper_bound {
+        return Err(UnitError::CelsiusOutsideGasMarkRange {
+            value: strip_plain(celsius),
+        });
+    }
     let mut closest: i32 = 1;
     let mut min_dist: Option<BigDecimal> = None;
     for (mark, c) in GAS_MARK_TO_C.iter() {
@@ -1136,7 +1184,38 @@ mod tests {
         assert_eq!(celsius_to_gas_mark(&bd_test("180")).unwrap(), 4);
         assert_eq!(celsius_to_gas_mark(&bd_test("210")).unwrap(), 6);
         assert_eq!(celsius_to_gas_mark(&bd_test("260")).unwrap(), 10);
-        assert_eq!(celsius_to_gas_mark(&bd_test("1000")).unwrap(), 10);
+    }
+
+    #[test]
+    fn celsius_to_gas_mark_rejects_out_of_range() {
+        // Regression for #12: values far outside the 140–260°C nominal range
+        // previously clamped silently to mark 1 or 10.
+        assert!(matches!(
+            celsius_to_gas_mark(&bd_test("-50")),
+            Err(UnitError::CelsiusOutsideGasMarkRange { .. })
+        ));
+        assert!(matches!(
+            celsius_to_gas_mark(&bd_test("1000")),
+            Err(UnitError::CelsiusOutsideGasMarkRange { .. })
+        ));
+    }
+
+    #[test]
+    fn to_celsius_rejects_negative_kelvin() {
+        // Kelvin cannot be negative (below absolute zero).
+        assert!(matches!(
+            to_celsius("k", &bd_test("-10")),
+            Err(UnitError::BelowAbsoluteZero { .. })
+        ));
+    }
+
+    #[test]
+    fn to_celsius_rejects_celsius_below_absolute_zero() {
+        // Celsius below -273.15 is physically impossible.
+        assert!(matches!(
+            to_celsius("c", &bd_test("-300")),
+            Err(UnitError::BelowAbsoluteZero { .. })
+        ));
     }
 
     #[test]

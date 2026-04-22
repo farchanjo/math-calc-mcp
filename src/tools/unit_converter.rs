@@ -84,6 +84,18 @@ fn convert_error(tool: &str, from_unit: &str, to_unit: &str, err: &UnitError) ->
             "temperature unit is not recognized",
             &format!("unit={code}"),
         ),
+        UnitError::BelowAbsoluteZero { unit, value } => error_with_detail(
+            tool,
+            ErrorCode::DomainError,
+            "temperature is below absolute zero",
+            &format!("unit={unit}, value={value}"),
+        ),
+        UnitError::CelsiusOutsideGasMarkRange { value } => error_with_detail(
+            tool,
+            ErrorCode::OutOfRange,
+            "Celsius is outside the gas-mark range (100–280°C buffer)",
+            &format!("celsius={value}"),
+        ),
         other => error(tool, ErrorCode::InvalidInput, &other.to_string()),
     }
 }

@@ -484,7 +484,10 @@ fn subnet_v4(address: &str, cidr: i32) -> String {
         .field("FIRST_HOST", long_to_ipv4_str(first_host))
         .field("LAST_HOST", long_to_ipv4_str(last_host))
         .field("USABLE_HOSTS", usable_hosts.to_string())
-        .field("IP_CLASS", ip_class(ip_val))
+        // Classful classification runs off the network address, not the
+        // caller-supplied host: `192.168.1.5/0` describes the whole IPv4
+        // space (network 0.0.0.0, class A), not class C.
+        .field("IP_CLASS", ip_class(network))
         .build()
 }
 
@@ -1282,6 +1285,18 @@ mod tests {
         assert_eq!(
             subnet_calculator("10.0.0.0", 31),
             "SUBNET_CALCULATOR: OK | NETWORK: 10.0.0.0 | BROADCAST: 10.0.0.1 | MASK: 255.255.255.254 | WILDCARD: 0.0.0.1 | FIRST_HOST: 10.0.0.0 | LAST_HOST: 10.0.0.1 | USABLE_HOSTS: 2 | IP_CLASS: A"
+        );
+    }
+
+    #[test]
+    fn subnet_calc_slash_zero_classified_by_network() {
+        // Regression for #6: 192.168.1.5/0 covers the entire IPv4 space; the
+        // class must reflect the network (0.0.0.0 → A), not the host octets.
+        let out = subnet_calculator("192.168.1.5", 0);
+        assert!(out.contains("NETWORK: 0.0.0.0"));
+        assert!(
+            out.contains("IP_CLASS: A"),
+            "expected class A for /0 network, got: {out}"
         );
     }
 
