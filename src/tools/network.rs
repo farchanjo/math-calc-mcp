@@ -817,8 +817,8 @@ fn compute_summary(subnets_json: &str) -> String {
             "subnet list must not be empty",
         );
     }
-    let mut min_network: i64 = 0xFFFF_FFFF;
-    let mut max_broadcast: i64 = 0;
+    let mut min_network: u32 = u32::MAX;
+    let mut max_broadcast: u32 = 0;
     for cidr in &cidr_list {
         let parts: Vec<&str> = cidr.split('/').collect();
         if parts.len() != 2 {
@@ -830,7 +830,7 @@ fn compute_summary(subnets_json: &str) -> String {
             );
         }
         let network = match parse_ipv4_for(SUMMARIZE_SUBNETS, parts[0]) {
-            Ok(v) => v,
+            Ok(v) => v as u32,
             Err(e) => return e,
         };
         let prefix: i32 = match parts[1].parse() {
@@ -848,8 +848,8 @@ fn compute_summary(subnets_json: &str) -> String {
             Ok(v) => v,
             Err(e) => return e,
         };
-        let mask = cidr_to_mask_v4(prefix_u);
-        let broadcast = network | (!mask & 0xFFFF_FFFF_i64);
+        let mask = cidr_to_mask_v4(prefix_u) as u32;
+        let broadcast = network | !mask;
         if network < min_network {
             min_network = network;
         }
@@ -857,12 +857,20 @@ fn compute_summary(subnets_json: &str) -> String {
             max_broadcast = broadcast;
         }
     }
-    let range = (max_broadcast - min_network + 1) as i32;
-    let super_bits = ceil_log2(range);
-    let super_cidr = IPV4_BITS as i32 - super_bits;
-    let super_mask = cidr_to_mask_v4(super_cidr as u32);
+    // Longest-common-prefix algorithm: count the matching high-order bits of
+    // min_network and max_broadcast. That prefix length IS the supernet CIDR.
+    // The previous implementation computed (range + 1) in `i32`, which
+    // overflowed for wide ranges (e.g. 10/8 + 172.16/12 + 192.168/16) and
+    // produced a nonsensical `10.0.0.0/32` result.
+    let diff: u32 = min_network ^ max_broadcast;
+    let super_cidr: u32 = if diff == 0 { IPV4_BITS } else { diff.leading_zeros() };
+    let super_mask = cidr_to_mask_v4(super_cidr) as u32;
     let super_network = min_network & super_mask;
-    let summary = format!("{}/{}", long_to_ipv4_str(super_network), super_cidr);
+    let summary = format!(
+        "{}/{}",
+        long_to_ipv4_str(i64::from(super_network)),
+        super_cidr
+    );
     Response::ok(SUMMARIZE_SUBNETS).result(summary).build()
 }
 
@@ -1300,6 +1308,28 @@ mod tests {
                 "[\"192.168.0.0/24\",\"192.168.1.0/24\",\"192.168.2.0/24\",\"192.168.3.0/24\"]",
             ),
             "SUMMARIZE_SUBNETS: OK | RESULT: 192.168.0.0/22"
+        );
+    }
+
+    #[test]
+    fn summarize_wide_non_contiguous_range() {
+        // Regression: the old implementation used `i32` for the `range`
+        // calculation, which overflowed for wide non-contiguous inputs and
+        // silently returned `10.0.0.0/32`. The correct supernet covering all
+        // three RFC-1918 blocks is the entire IPv4 space (`0.0.0.0/0`).
+        assert_eq!(
+            summarize_subnets(
+                "[\"10.0.0.0/8\",\"172.16.0.0/12\",\"192.168.0.0/16\"]",
+            ),
+            "SUMMARIZE_SUBNETS: OK | RESULT: 0.0.0.0/0"
+        );
+    }
+
+    #[test]
+    fn summarize_single_subnet_returns_itself() {
+        assert_eq!(
+            summarize_subnets("[\"192.168.0.0/24\"]"),
+            "SUMMARIZE_SUBNETS: OK | RESULT: 192.168.0.0/24"
         );
     }
 
