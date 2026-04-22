@@ -223,6 +223,10 @@ struct Parser<'a, 'c> {
     input: Vec<char>,
     variables: &'a HashMap<String, String>,
     pos: usize,
+    /// Tracks unmatched `(` count so that an unknown identifier hitting
+    /// end-of-input inside an open paren is reported as a parse error
+    /// (unclosed paren) rather than UNKNOWN_VARIABLE.
+    paren_depth: u32,
     consts: &'c mut Consts,
 }
 
@@ -237,6 +241,7 @@ impl<'a, 'c> Parser<'a, 'c> {
             input: stripped,
             variables,
             pos: 0,
+            paren_depth: 0,
             consts,
         }
     }
@@ -310,8 +315,10 @@ impl<'a, 'c> Parser<'a, 'c> {
         let ch = self.current_char().ok_or(ExpressionError::UnexpectedEnd)?;
         if ch == '(' {
             self.pos += 1;
+            self.paren_depth += 1;
             let value = self.parse_expression()?;
             self.expect_close_paren()?;
+            self.paren_depth -= 1;
             Ok(value)
         } else if ch.is_ascii_digit() || ch == '.' {
             self.parse_number()
@@ -363,11 +370,18 @@ impl<'a, 'c> Parser<'a, 'c> {
 
         if self.current_char() == Some('(') {
             self.pos += 1;
+            self.paren_depth += 1;
             let argument = self.parse_expression()?;
             self.expect_close_paren()?;
+            self.paren_depth -= 1;
             self.call_function(&name, argument)
         } else if let Some(value) = self.variables.get(&name) {
             BigDecimal::from_str(value).map_err(|_| ExpressionError::InvalidNumber(value.clone()))
+        } else if self.paren_depth > 0 && self.current_char().is_none() {
+            // Unclosed paren wins over UNKNOWN_VARIABLE when we bailed out at
+            // end-of-input inside an open parenthesis context — the caller
+            // really fed us a malformed expression like `((bad`.
+            Err(ExpressionError::ExpectedCloseParen { pos: self.pos })
         } else {
             Err(ExpressionError::UnknownVariable(name))
         }
@@ -552,5 +566,15 @@ mod tests {
             evaluate("1 + sqrt(-1)").unwrap_err(),
             ExpressionError::DomainError { .. }
         ));
+    }
+
+    #[test]
+    fn unclosed_paren_wins_over_unknown_variable() {
+        // Regression: `((bad` used to surface as UnknownVariable("bad").
+        let err = evaluate("((bad").unwrap_err();
+        assert!(
+            matches!(err, ExpressionError::ExpectedCloseParen { .. }),
+            "got {err:?}"
+        );
     }
 }

@@ -14,7 +14,10 @@
 //!
 //! # Semantics
 //! * Trigonometric functions accept **degrees** and convert internally.
-//! * Division by zero follows IEEE-754 (`±Inf`); modulo by zero yields `NaN`.
+//! * Division or modulo by zero surface as [`ExpressionError::DivisionByZero`]
+//!   (instead of IEEE ±Inf / NaN leaking to the caller).
+//! * Transcendentals (`sqrt`, `log`, `log10`) that leave their real domain
+//!   surface as [`ExpressionError::DomainError`].
 //! * Unary minus is a prefix operator — number literals never carry a sign.
 
 use std::collections::HashMap;
@@ -54,13 +57,11 @@ pub enum ExpressionError {
         /// Position where `)` was expected.
         pos: usize,
     },
-    /// Division or modulo by exact zero (exact-precision evaluator only — the
-    /// `f64` evaluator yields IEEE ±Inf or NaN and never emits this variant).
+    /// Division or modulo by exact zero.
     #[error("Division by zero")]
     DivisionByZero,
     /// A transcendental evaluated outside its real-valued domain (e.g.
-    /// `sqrt(-1)`, `log(0)`, `log(-x)`). Exact-precision evaluator only — the
-    /// `f64` evaluator surfaces NaN / −Inf through IEEE and never emits this.
+    /// `sqrt(-1)`, `log(0)`, `log(-x)`, `tan(90)`).
     #[error("Domain error in {op}: value={value}")]
     DomainError {
         /// Operation name (`sqrt`, `log`, `log10`, `pow`, `tan`, …).
@@ -127,6 +128,9 @@ struct Parser<'a> {
     input: Vec<char>,
     variables: &'a HashMap<String, f64>,
     pos: usize,
+    /// Open `(` counter — see the equivalent field in the exact parser for
+    /// the parse-error-priority rationale (`((bad` → ExpectedCloseParen).
+    paren_depth: u32,
 }
 
 impl<'a> Parser<'a> {
@@ -136,6 +140,7 @@ impl<'a> Parser<'a> {
             input: stripped,
             variables,
             pos: 0,
+            paren_depth: 0,
         }
     }
 
@@ -173,11 +178,19 @@ impl<'a> Parser<'a> {
                 }
                 '/' => {
                     self.pos += 1;
-                    result /= self.parse_power()?;
+                    let rhs = self.parse_power()?;
+                    if rhs == 0.0 {
+                        return Err(ExpressionError::DivisionByZero);
+                    }
+                    result /= rhs;
                 }
                 '%' => {
                     self.pos += 1;
-                    result %= self.parse_power()?;
+                    let rhs = self.parse_power()?;
+                    if rhs == 0.0 {
+                        return Err(ExpressionError::DivisionByZero);
+                    }
+                    result %= rhs;
                 }
                 _ => break,
             }
@@ -213,8 +226,10 @@ impl<'a> Parser<'a> {
         let ch = self.current_char().ok_or(ExpressionError::UnexpectedEnd)?;
         if ch == '(' {
             self.pos += 1;
+            self.paren_depth += 1;
             let value = self.parse_expression()?;
             self.expect_close_paren()?;
+            self.paren_depth -= 1;
             Ok(value)
         } else if ch.is_ascii_digit() || ch == '.' {
             self.parse_number()
@@ -270,11 +285,15 @@ impl<'a> Parser<'a> {
 
         if self.current_char() == Some('(') {
             self.pos += 1;
+            self.paren_depth += 1;
             let argument = self.parse_expression()?;
             self.expect_close_paren()?;
+            self.paren_depth -= 1;
             call_function(&name, argument)
         } else if let Some(value) = self.variables.get(&name) {
             Ok(*value)
+        } else if self.paren_depth > 0 && self.current_char().is_none() {
+            Err(ExpressionError::ExpectedCloseParen { pos: self.pos })
         } else {
             Err(ExpressionError::UnknownVariable(name))
         }
@@ -290,18 +309,61 @@ impl<'a> Parser<'a> {
 }
 
 fn call_function(name: &str, arg: f64) -> Result<f64, ExpressionError> {
+    let domain_err = |op: &str| ExpressionError::DomainError {
+        op: op.to_string(),
+        value: format_arg(arg),
+    };
     match name {
         "sin" => Ok((arg * PI / 180.0).sin()),
         "cos" => Ok((arg * PI / 180.0).cos()),
-        "tan" => Ok((arg * PI / 180.0).tan()),
-        "log" => Ok(arg.ln()),
-        "log10" => Ok(arg.log10()),
-        "sqrt" => Ok(arg.sqrt()),
+        "tan" => {
+            let value = (arg * PI / 180.0).tan();
+            if !value.is_finite() {
+                return Err(domain_err("tan"));
+            }
+            Ok(value)
+        }
+        "log" => {
+            if arg <= 0.0 {
+                return Err(domain_err("log"));
+            }
+            Ok(arg.ln())
+        }
+        "log10" => {
+            if arg <= 0.0 {
+                return Err(domain_err("log10"));
+            }
+            Ok(arg.log10())
+        }
+        "sqrt" => {
+            if arg < 0.0 {
+                return Err(domain_err("sqrt"));
+            }
+            Ok(arg.sqrt())
+        }
         "abs" => Ok(arg.abs()),
         "ceil" => Ok(arg.ceil()),
         "floor" => Ok(arg.floor()),
         _ => Err(ExpressionError::UnknownFunction(name.to_string())),
     }
+}
+
+/// Render `value` for DETAIL output — strips the trailing `.0` that Rust's
+/// default float formatter appends to integer-valued doubles, while falling
+/// back to `Display` for fractional or out-of-`i64`-range inputs.
+fn format_arg(value: f64) -> String {
+    const I64_MIN_F: f64 = i64::MIN as f64;
+    const I64_MAX_F: f64 = i64::MAX as f64;
+    if value.is_finite()
+        && value.fract() == 0.0
+        && (I64_MIN_F..=I64_MAX_F).contains(&value)
+    {
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            return format!("{}", value as i64);
+        }
+    }
+    format!("{value}")
 }
 
 // --------------------------------------------------------------------------- //
@@ -535,19 +597,72 @@ mod tests {
         assert_close(evaluate("  1\t+\n2  ").unwrap(), 3.0);
     }
 
-    // ---- IEEE-754 division / modulo ----
+    // ---- Division / modulo by zero ----
 
     #[test]
-    fn division_by_zero_is_infinity() {
-        assert!(evaluate("1 / 0").unwrap().is_infinite());
-        assert!(evaluate("-1 / 0").unwrap().is_infinite());
-        assert!(evaluate("1 / 0").unwrap().is_sign_positive());
-        assert!(evaluate("-1 / 0").unwrap().is_sign_negative());
+    fn division_by_zero_is_error() {
+        assert!(matches!(
+            evaluate("1 / 0").unwrap_err(),
+            ExpressionError::DivisionByZero
+        ));
+        assert!(matches!(
+            evaluate("-1 / 0").unwrap_err(),
+            ExpressionError::DivisionByZero
+        ));
     }
 
     #[test]
-    fn modulo_by_zero_is_nan() {
-        assert!(evaluate("1 % 0").unwrap().is_nan());
+    fn modulo_by_zero_is_error() {
+        assert!(matches!(
+            evaluate("1 % 0").unwrap_err(),
+            ExpressionError::DivisionByZero
+        ));
+    }
+
+    // ---- Transcendental domain errors ----
+
+    #[test]
+    fn sqrt_of_negative_is_domain_error() {
+        match evaluate("sqrt(-9)").unwrap_err() {
+            ExpressionError::DomainError { op, value } => {
+                assert_eq!(op, "sqrt");
+                assert_eq!(value, "-9");
+            }
+            other => panic!("expected DomainError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn log_of_zero_is_domain_error() {
+        match evaluate("log(0)").unwrap_err() {
+            ExpressionError::DomainError { op, value } => {
+                assert_eq!(op, "log");
+                assert_eq!(value, "0");
+            }
+            other => panic!("expected DomainError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn log_of_negative_is_domain_error() {
+        match evaluate("log(-1)").unwrap_err() {
+            ExpressionError::DomainError { op, value } => {
+                assert_eq!(op, "log");
+                assert_eq!(value, "-1");
+            }
+            other => panic!("expected DomainError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn log10_of_zero_is_domain_error() {
+        match evaluate("log10(0)").unwrap_err() {
+            ExpressionError::DomainError { op, value } => {
+                assert_eq!(op, "log10");
+                assert_eq!(value, "0");
+            }
+            other => panic!("expected DomainError, got {other:?}"),
+        }
     }
 
     // ---- errors (exact message matching) ----
@@ -615,5 +730,16 @@ mod tests {
         // Whitespace stripped: "sqrt(4" — length 6, position 6 is past end.
         let err = evaluate("sqrt(4").unwrap_err();
         assert_eq!(err.to_string(), "Expected ')' at position 6");
+    }
+
+    #[test]
+    fn err_unclosed_paren_wins_over_unknown_variable() {
+        // Regression: `((bad` used to surface as `UnknownVariable("bad")`
+        // because the identifier parser fired before the outer `)`-expect.
+        let err = evaluate("((bad").unwrap_err();
+        assert!(
+            matches!(err, ExpressionError::ExpectedCloseParen { .. }),
+            "got {err:?}"
+        );
     }
 }
