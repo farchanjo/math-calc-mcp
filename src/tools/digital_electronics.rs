@@ -447,6 +447,14 @@ pub fn nyquist_rate(bandwidth_hz: &str) -> String {
         Ok(v) => v,
         Err(e) => return e,
     };
+    if bw.is_zero() || bw.is_negative() {
+        return error_with_detail(
+            NYQUIST_RATE,
+            ErrorCode::InvalidInput,
+            "bandwidth must be positive",
+            &format!("bandwidthHz={bandwidth_hz}"),
+        );
+    }
     let min_rate = mul_ctx(&bw, &BigDecimal::from(2));
     Response::ok(NYQUIST_RATE).result(strip_plain(&min_rate)).build()
 }
@@ -764,6 +772,24 @@ mod tests {
         assert_eq!(
             nyquist_rate("20000"),
             "NYQUIST_RATE: OK | RESULT: 40000"
+        );
+    }
+
+    #[test]
+    fn nyquist_rate_rejects_zero() {
+        // Regression: previously returned 0 for bandwidth=0 instead of erroring.
+        assert_eq!(
+            nyquist_rate("0"),
+            "NYQUIST_RATE: ERROR\nREASON: [INVALID_INPUT] bandwidth must be positive\nDETAIL: bandwidthHz=0"
+        );
+    }
+
+    #[test]
+    fn nyquist_rate_rejects_negative() {
+        // Regression: previously returned -200 for bandwidth=-100.
+        assert_eq!(
+            nyquist_rate("-100"),
+            "NYQUIST_RATE: ERROR\nREASON: [INVALID_INPUT] bandwidth must be positive\nDETAIL: bandwidthHz=-100"
         );
     }
 }
