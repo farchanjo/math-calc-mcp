@@ -1,4 +1,4 @@
-//! Port of `PrintingCalculatorTool.java` — tape calculator with running totals.
+
 //!
 //! Behavioral parity:
 //! * Arithmetic is exact, backed by `bigdecimal::BigDecimal`.

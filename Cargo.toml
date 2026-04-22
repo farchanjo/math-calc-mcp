@@ -48,16 +48,16 @@ schemars = "0.8"
 anyhow = "1"
 thiserror = "2"
 
-# Arbitrary-precision arithmetic (pure Rust, matches Java BigDecimal/BigInteger semantics)
+# Arbitrary-precision arithmetic (DECIMAL128 semantics, HALF_UP rounding)
 bigdecimal = { version = "0.4", features = ["serde"] }
 num-bigint = "0.4"
 num-traits = "0.2"
 num-integer = "0.1"
 
-# Arbitrary-precision transcendentals (pure Rust — replaces StrictMath with correct rounding)
+# Arbitrary-precision transcendentals with correct rounding (128-bit precision)
 astro-float = "0.9"
 
-# DateTime with IANA timezone support (pure Rust — replaces java.time)
+# DateTime with IANA timezone support (embedded timezone database)
 jiff = { version = "0.2", features = ["serde"] }
 
 # Portable SIMD (auto-dispatches SSE2/AVX2/AVX-512/NEON)

@@ -1,4 +1,4 @@
-//! Port of `CalculusTool.java` — numerical calculus (derivatives and integrals)
+
 //! built on top of [`crate::engine::expression`].
 //!
 //! Algorithms:
@@ -28,7 +28,7 @@ const SIMPSON_INTERVALS: i32 = 10_000;
 const MAX_ORDER: i32 = 10;
 
 /// Format an f64 using Rust's debug representation (closest available match to
-/// Java's `String.valueOf(double)` — emits `1.0` for whole doubles).
+`String.valueOf(double)` — emits `1.0` for whole doubles).
 fn format_f64(value: f64) -> String {
     format!("{value:?}")
 }

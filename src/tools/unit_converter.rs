@@ -1,4 +1,4 @@
-//! Port of `UnitConverterTool.java` — measurement unit conversions with
+
 //! category validation and auto-detection.
 //!
 //! All public functions return `String` using the response envelope: inline

@@ -1,4 +1,4 @@
-//! Port of `FinancialCalculatorTool.java` — arbitrary-precision financial math
+
 //! matching Java `BigDecimal` + `MathContext.DECIMAL128` semantics (34 digits,
 //! `HALF_UP` rounding).
 //!

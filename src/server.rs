@@ -32,8 +32,7 @@ impl Default for MathCalcServer {
 
 // --------------------------------------------------------------------------- //
 //  Parameter structs — deduplicated by shape. `#[serde(rename_all = "camelCase")]`
-//  is applied to structs with multi-word fields so the JSON keys match the
-//  Java Spring AI convention (e.g. `fromUnit`, `annualRate`).
+//  is applied to structs with multi-word fields for consistent API naming.
 // --------------------------------------------------------------------------- //
 
 // ---- basic / abs (decimal strings) ---- //

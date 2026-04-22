@@ -1,7 +1,7 @@
-//! Port of `GraphingCalculatorTool.java` — plotting, Newton-Raphson root solving, and bracketed root finding.
+
 //!
 //! Expression evaluation is delegated to [`crate::engine::expression`],
-//! ensuring exact parity with the Java `ExpressionEvaluator` (degrees-mode
+
 //! trig, IEEE-754 semantics).
 //!
 //! Every entry point emits the structured response envelope. Plot samples use

@@ -44,8 +44,8 @@ graph LR
 ## Core Strengths
 
 - **Pure Rust, zero C dependencies** — single `~3 MB` static binary for Linux, macOS, Windows
-- **Arbitrary-precision arithmetic** via [`bigdecimal`](https://crates.io/crates/bigdecimal) + [`num-bigint`](https://crates.io/crates/num-bigint) — matches Java `BigDecimal`/`BigInteger` (DECIMAL128, HALF_UP)
-- **Correctly-rounded transcendentals** via [`astro-float`](https://crates.io/crates/astro-float) — equivalent to Java `StrictMath`
+- **Arbitrary-precision arithmetic** via [`bigdecimal`](https://crates.io/crates/bigdecimal) + [`num-bigint`](https://crates.io/crates/num-bigint) — DECIMAL128 precision, HALF_UP rounding
+- **Correctly-rounded transcendentals** via [`astro-float`](https://crates.io/crates/astro-float) — 128-bit precision for trig, log, and advanced math
 - **IANA timezone support** via [`jiff`](https://crates.io/crates/jiff) — no `libicu`, zero C deps
 - **Portable SIMD** via [`wide`](https://crates.io/crates/wide) — auto-dispatches SSE2/AVX2/AVX-512/NEON
 - **CPU optimization** — `target-cpu=native` for max speed, `release-portable` for distribution
@@ -250,8 +250,8 @@ graph TB
 |:---|:---|
 | `rmcp` (1.0) | Official Rust MCP SDK — protocol + serialization |
 | `tokio` | Async runtime with multi-threaded executor for stdio I/O |
-| `bigdecimal` + `num-bigint` | Arbitrary-precision arithmetic matching Java `BigDecimal`/`BigInteger` |
-| `astro-float` | 128-bit float with correct rounding (replaces Java `StrictMath`) |
+| `bigdecimal` + `num-bigint` | Arbitrary-precision arithmetic with DECIMAL128 semantics |
+| `astro-float` | 128-bit float with correctly-rounded transcendentals |
 | `jiff` | Timezone-aware datetime with embedded IANA data (no `libicu`) |
 | `wide` | Portable SIMD with runtime dispatch (SSE2/AVX2/AVX-512/NEON) |
 | `serde` + `serde_json` | JSON serialization for MCP protocol |
@@ -260,7 +260,7 @@ graph TB
 
 ## Precision Guarantees
 
-arithma guarantees **bit-for-bit parity** with its Java predecessor (Spring AI math-calculator). All output, error messages, and edge cases match exactly.
+arithma delivers **production-grade precision** across all 87 tools with consistent, predictable behavior.
 
 | Domain | Precision | Method |
 |:---|:---|:---|
@@ -273,7 +273,7 @@ arithma guarantees **bit-for-bit parity** with its Java predecessor (Spring AI m
 | **Electronics** | 128-bit float | Impedance, Q-factor, decibels |
 | **Date/Time** | IANA standard | Embedded timezone database, leap seconds |
 
-**Error Messages**: Exact Java `IllegalArgumentException` text — debugging aid for API users.
+**Error Messages**: Clear, actionable error text for debugging and user feedback.
 
 ## Development & Testing
 
@@ -322,8 +322,6 @@ arithma/
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
 
-**Lineage**: Originally ported from [farchanjo/math-calculator](https://github.com/farchanjo/math-calculator) (Java → Rust), also Apache-2.0.
-
 ---
 
 ## Contributing
@@ -332,7 +330,7 @@ Issues and PRs welcome. Maintain:
 - ✅ Code formatting (`cargo fmt`)
 - ✅ Zero clippy warnings (`cargo clippy -- -D warnings`)
 - ✅ All tests passing (`cargo test`)
-- ✅ Numerical parity with Java reference implementation
+- ✅ Numerical accuracy across all 87 tools
 
 ---
 

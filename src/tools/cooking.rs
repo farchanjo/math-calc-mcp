@@ -1,4 +1,4 @@
-//! Port of `CookingConverterTool.java` — narrow cooking-specific converters
+
 //! for volume, weight, and oven temperature (including UK gas mark).
 //!
 //! All public functions return `String` using the response envelope: inline

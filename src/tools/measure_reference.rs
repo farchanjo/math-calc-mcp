@@ -1,4 +1,4 @@
-//! Port of `MeasureReferenceTool.java` — introspection helpers for the unit
+
 //! registry (category listing, unit listing, conversion factor, explanation).
 //!
 //! All public functions return `String` using the response envelope: inline

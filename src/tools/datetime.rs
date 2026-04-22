@@ -1,4 +1,4 @@
-//! Port of `DateTimeConverterTool.java` — pure-Rust datetime conversion backed by `jiff`.
+
 //!
 //! All public functions return `String` using the response envelope.
 //!
