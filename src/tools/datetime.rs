@@ -214,7 +214,11 @@ fn parse_with_format(
     input_format: &str,
     zone: &TimeZone,
 ) -> Result<Zoned, String> {
-    match input_format.to_ascii_lowercase().as_str() {
+    // Same reasoning as `format_output`: match keywords case-insensitively
+    // but pass the ORIGINAL pattern to strptime so `%Y`/`%H`/`%S` aren't
+    // silently turned into their lowercase (and very different) variants.
+    let keyword = input_format.to_ascii_lowercase();
+    match keyword.as_str() {
         "iso" | "iso-zoned" | "iso-offset" | "iso-local" => parse_datetime(tool, datetime, zone),
         "epoch" => {
             let secs: i64 = datetime
@@ -234,11 +238,11 @@ fn parse_with_format(
                 .map(|ts| ts.to_zoned(zone.clone()))
                 .map_err(|_| datetime_parse_error(tool, datetime))
         }
-        pattern => {
-            if let Ok(zoned) = Zoned::strptime(pattern, datetime) {
+        _ => {
+            if let Ok(zoned) = Zoned::strptime(input_format, datetime) {
                 return Ok(zoned);
             }
-            match DateTime::strptime(pattern, datetime) {
+            match DateTime::strptime(input_format, datetime) {
                 Ok(civil) => civil
                     .to_zoned(zone.clone())
                     .map_err(|_| datetime_parse_error(tool, datetime)),
@@ -246,7 +250,7 @@ fn parse_with_format(
                     tool,
                     ErrorCode::InvalidInput,
                     "format pattern rejected the datetime",
-                    &format!("format={pattern}"),
+                    &format!("format={input_format}"),
                 )),
             }
         }
@@ -258,7 +262,11 @@ fn parse_with_format(
 // --------------------------------------------------------------------------- //
 
 fn format_output(tool: &str, zoned: &Zoned, format: &str) -> Result<String, String> {
-    Ok(match format.to_ascii_lowercase().as_str() {
+    // Match keywords case-insensitively but NEVER pass the lowercased
+    // pattern to `strftime` — `%Y`→`%y` (2-digit year), `%H`→`%h` (month
+    // abbrev), `%S`→`%s` (epoch), etc. would all silently corrupt output.
+    let keyword = format.to_ascii_lowercase();
+    Ok(match keyword.as_str() {
         "iso" | "iso-zoned" => format_iso_zoned(zoned),
         "iso-offset" => format_iso_offset(zoned),
         "iso-local" => zoned.datetime().to_string(),
@@ -272,7 +280,7 @@ fn format_output(tool: &str, zoned: &Zoned, format: &str) -> Result<String, Stri
                 "format=rfc1123",
             )
         })?,
-        pattern => zoned.strftime(pattern).to_string(),
+        _ => zoned.strftime(format).to_string(),
     })
 }
 
@@ -394,6 +402,47 @@ mod tests {
         assert!(out.starts_with("FORMAT_DATETIME: OK | RESULT: "), "got {out}");
         assert!(out.contains("Mar 2026"), "got {out}");
         assert!(out.contains("12:00:00"), "got {out}");
+    }
+
+    #[test]
+    fn format_strftime_uppercase_conversions_preserved() {
+        // Regression: `format.to_ascii_lowercase()` used to mangle the
+        // strftime pattern before forwarding it to jiff, turning %Y into
+        // %y (2-digit), %H into %h (month abbrev), %S into %s (epoch), etc.
+        assert_eq!(
+            format_datetime("1000000000", "epoch", "%Y-%m-%d", "UTC"),
+            "FORMAT_DATETIME: OK | RESULT: 2001-09-09"
+        );
+        assert_eq!(
+            format_datetime("1000000000", "epoch", "%H:%M:%S", "UTC"),
+            "FORMAT_DATETIME: OK | RESULT: 01:46:40"
+        );
+        assert_eq!(
+            format_datetime("1000000000", "epoch", "%d/%m/%Y %H:%M", "UTC"),
+            "FORMAT_DATETIME: OK | RESULT: 09/09/2001 01:46"
+        );
+        let full_names = format_datetime(
+            "1000000000",
+            "epoch",
+            "%A, %B %d, %Y",
+            "UTC",
+        );
+        assert!(
+            full_names.contains("Sunday") && full_names.contains("September"),
+            "got {full_names}"
+        );
+    }
+
+    #[test]
+    fn current_datetime_strftime_year_is_four_digits() {
+        // Regression: `%Y` used to be lowercased to `%y` in the tool layer.
+        let out = current_datetime("UTC", "%Y");
+        let year_section = out
+            .rsplit_once("| RESULT: ")
+            .expect("has RESULT")
+            .1
+            .trim();
+        assert_eq!(year_section.len(), 4, "expected 4-digit year, got {out}");
     }
 
     #[test]
