@@ -2,7 +2,7 @@
 //!
 //! Behavioral parity:
 //! * Arithmetic is exact, backed by `bigdecimal::BigDecimal`.
-//! * Division scale = 20, rounding mode = HALF_UP.
+//! * Division scale = 20, rounding mode = `HALF_UP`.
 //! * Display scale = 2 (applied per row and to the final total).
 //! * `=` emits a subtotal row. `C` clears the running total. `T` emits the
 //!   grand total and resets.
@@ -24,6 +24,7 @@ const DISPLAY_SCALE: i64 = 2;
 const DIVISION_SCALE: i64 = 20;
 
 /// Run a sequence of operations and return the tape envelope.
+#[must_use] 
 pub fn calculate_with_tape(operations_json: &str) -> String {
     if operations_json.trim().is_empty() {
         return error(
@@ -54,7 +55,7 @@ struct Entry {
     value: Option<String>,
 }
 
-fn parse_entries(json: &str) -> Result<Vec<Entry>, String> {
+fn parse_array_root(json: &str) -> Result<Vec<Value>, String> {
     let parsed: Value = serde_json::from_str(json).map_err(|_| {
         error(
             TOOL_CALCULATE_WITH_TAPE,
@@ -62,15 +63,57 @@ fn parse_entries(json: &str) -> Result<Vec<Entry>, String> {
             "operations must be a JSON array",
         )
     })?;
-
-    let array = parsed.as_array().ok_or_else(|| {
+    parsed.as_array().cloned().ok_or_else(|| {
         error(
             TOOL_CALCULATE_WITH_TAPE,
             ErrorCode::ParseError,
             "operations must be a JSON array",
         )
-    })?;
+    })
+}
 
+fn extract_op(obj: &serde_json::Map<String, Value>) -> Result<String, String> {
+    let op = obj.get("op").ok_or_else(|| {
+        error(
+            TOOL_CALCULATE_WITH_TAPE,
+            ErrorCode::InvalidInput,
+            "missing field: op",
+        )
+    })?;
+    match op {
+        Value::String(s) => Ok(s.clone()),
+        Value::Null => Err(error(
+            TOOL_CALCULATE_WITH_TAPE,
+            ErrorCode::InvalidInput,
+            "missing field: op",
+        )),
+        other => Ok(other.to_string()),
+    }
+}
+
+fn extract_value(obj: &serde_json::Map<String, Value>) -> Result<Option<String>, String> {
+    if !obj.contains_key("value") {
+        return Err(error(
+            TOOL_CALCULATE_WITH_TAPE,
+            ErrorCode::InvalidInput,
+            "missing field: value",
+        ));
+    }
+    match obj.get("value") {
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(Value::Number(n)) => Ok(Some(n.to_string())),
+        Some(Value::Bool(b)) => Ok(Some(b.to_string())),
+        Some(_) | None => Err(error(
+            TOOL_CALCULATE_WITH_TAPE,
+            ErrorCode::InvalidInput,
+            "missing field: value",
+        )),
+    }
+}
+
+fn parse_entries(json: &str) -> Result<Vec<Entry>, String> {
+    let array = parse_array_root(json)?;
     let mut entries = Vec::with_capacity(array.len());
     for item in array {
         let obj = item.as_object().ok_or_else(|| {
@@ -80,50 +123,9 @@ fn parse_entries(json: &str) -> Result<Vec<Entry>, String> {
                 "operations must be a JSON array",
             )
         })?;
-
-        let op = obj.get("op").ok_or_else(|| {
-            error(
-                TOOL_CALCULATE_WITH_TAPE,
-                ErrorCode::InvalidInput,
-                "missing field: op",
-            )
-        })?;
-        let op_str = match op {
-            Value::String(s) => s.clone(),
-            Value::Null => {
-                return Err(error(
-                    TOOL_CALCULATE_WITH_TAPE,
-                    ErrorCode::InvalidInput,
-                    "missing field: op",
-                ));
-            }
-            other => other.to_string(),
-        };
-
-        if !obj.contains_key("value") {
-            return Err(error(
-                TOOL_CALCULATE_WITH_TAPE,
-                ErrorCode::InvalidInput,
-                "missing field: value",
-            ));
-        }
-        let value_str = match obj.get("value") {
-            Some(Value::Null) => None,
-            Some(Value::String(s)) => Some(s.clone()),
-            Some(Value::Number(n)) => Some(n.to_string()),
-            Some(Value::Bool(b)) => Some(b.to_string()),
-            Some(_) | None => {
-                return Err(error(
-                    TOOL_CALCULATE_WITH_TAPE,
-                    ErrorCode::InvalidInput,
-                    "missing field: value",
-                ));
-            }
-        };
-
         entries.push(Entry {
-            operation: op_str,
-            value: value_str,
+            operation: extract_op(obj)?,
+            value: extract_value(obj)?,
         });
     }
     Ok(entries)

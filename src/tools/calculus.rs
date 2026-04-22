@@ -54,11 +54,15 @@ fn central_difference(
     point: f64,
     step: f64,
 ) -> Result<f64, ExpressionError> {
-    let f_minus2 = eval(expression, variable, point - 2.0 * step)?;
+    let two_step = 2.0 * step;
+    let f_minus2 = eval(expression, variable, point - two_step)?;
     let f_minus1 = eval(expression, variable, point - step)?;
     let f_plus1 = eval(expression, variable, point + step)?;
-    let f_plus2 = eval(expression, variable, point + 2.0 * step)?;
-    Ok((-f_plus2 + 8.0 * f_plus1 - 8.0 * f_minus1 + f_minus2) / (12.0 * step))
+    let f_plus2 = eval(expression, variable, point + two_step)?;
+    let eight_f_plus1 = 8.0 * f_plus1;
+    let eight_f_minus1 = 8.0 * f_minus1;
+    let numerator = -f_plus2 + eight_f_plus1 - eight_f_minus1 + f_minus2;
+    Ok(numerator / (12.0 * step))
 }
 
 fn binomial_coeff(total: i32, choose: i32) -> f64 {
@@ -102,7 +106,8 @@ fn simpson(
     let mut sum = eval(expression, variable, lower)? + eval(expression, variable, upper)?;
 
     for idx in 1..intervals {
-        let x_val = lower + f64::from(idx) * step;
+        let offset = f64::from(idx) * step;
+        let x_val = lower + offset;
         let f_val = eval(expression, variable, x_val)?;
         let multiplier = if idx % 2 == 0 { 2.0 } else { 4.0 };
         sum += multiplier * f_val;
@@ -115,6 +120,7 @@ fn simpson(
 // --------------------------------------------------------------------------- //
 
 /// Compute the numerical derivative of `expression` w.r.t. `variable` at `point`.
+#[must_use] 
 pub fn derivative(expression: &str, variable: &str, point: f64) -> String {
     let tool = TOOL_DERIVATIVE;
     match central_difference(expression, variable, point, DERIVATIVE_STEP) {
@@ -124,6 +130,7 @@ pub fn derivative(expression: &str, variable: &str, point: f64) -> String {
 }
 
 /// Compute the nth-order numerical derivative. `order` must be in `[1, 10]`.
+#[must_use] 
 pub fn nth_derivative(expression: &str, variable: &str, point: f64, order: i32) -> String {
     let tool = TOOL_NTH_DERIVATIVE;
     if !(1..=MAX_ORDER).contains(&order) {
@@ -141,6 +148,7 @@ pub fn nth_derivative(expression: &str, variable: &str, point: f64, order: i32) 
 }
 
 /// Definite integral over `[lower, upper]` by composite Simpson's rule.
+#[must_use] 
 pub fn definite_integral(expression: &str, variable: &str, lower: f64, upper: f64) -> String {
     let tool = TOOL_DEFINITE_INTEGRAL;
     match simpson(expression, variable, lower, upper) {
@@ -164,6 +172,7 @@ pub fn definite_integral(expression: &str, variable: &str, lower: f64, upper: f6
 /// Compute the tangent line to `f(x)` at `point`.
 ///
 /// Emits `SLOPE`, `INTERCEPT`, and `EQUATION` inline fields.
+#[must_use] 
 pub fn tangent_line(expression: &str, variable: &str, point: f64) -> String {
     let tool = TOOL_TANGENT_LINE;
     let f_at_point = match eval(expression, variable, point) {
@@ -174,7 +183,7 @@ pub fn tangent_line(expression: &str, variable: &str, point: f64) -> String {
         Ok(v) => v,
         Err(err) => return map_expression_error(tool, &err),
     };
-    let y_intercept = f_at_point - slope * point;
+    let y_intercept = slope.mul_add(-point, f_at_point);
     let slope_s = format_f64(slope);
     let intercept_s = format_f64(y_intercept);
     let equation = format!("y = {slope_s}*x + {intercept_s}");

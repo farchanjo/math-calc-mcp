@@ -127,31 +127,32 @@ pub fn ip_to_decimal(address: &str) -> String {
 /// Convert an unsigned decimal integer string to an IP address.
 #[must_use]
 pub fn decimal_to_ip(decimal: &str, version: i32) -> String {
+    const IPV4_MAX: i64 = 0xFFFF_FFFF;
     if version == 6 {
-        match BigInt::from_str(decimal) {
-            Ok(big) => Response::ok(DECIMAL_TO_IP)
-                .result(big_int_to_ipv6_full(&big))
-                .build(),
-            Err(_) => error_with_detail(
-                DECIMAL_TO_IP,
-                ErrorCode::ParseError,
-                "decimal is not a valid integer",
-                &format!("decimal={decimal}"),
-            ),
-        }
-    } else if version == 4 {
-        let value = match decimal.parse::<i64>() {
-            Ok(v) => v,
-            Err(_) => {
-                return error_with_detail(
+        BigInt::from_str(decimal).map_or_else(
+            |_| {
+                error_with_detail(
                     DECIMAL_TO_IP,
                     ErrorCode::ParseError,
                     "decimal is not a valid integer",
                     &format!("decimal={decimal}"),
-                );
-            }
+                )
+            },
+            |big| {
+                Response::ok(DECIMAL_TO_IP)
+                    .result(big_int_to_ipv6_full(&big))
+                    .build()
+            },
+        )
+    } else if version == 4 {
+        let Ok(value) = decimal.parse::<i64>() else {
+            return error_with_detail(
+                DECIMAL_TO_IP,
+                ErrorCode::ParseError,
+                "decimal is not a valid integer",
+                &format!("decimal={decimal}"),
+            );
         };
-        const IPV4_MAX: i64 = 0xFFFF_FFFF;
         if !(0..=IPV4_MAX).contains(&value) {
             return error_with_detail(
                 DECIMAL_TO_IP,
@@ -305,15 +306,21 @@ fn long_to_ipv4_str(value: i64) -> String {
     )
 }
 
-fn cidr_to_mask_v4(cidr: u32) -> i64 {
+const fn cidr_to_mask_v4_u32(cidr: u32) -> u32 {
     if cidr == 0 {
         0
     } else {
-        (0xFFFF_FFFFu64 << (IPV4_BITS - cidr) & 0xFFFF_FFFFu64) as i64
+        // Shift is bounded by cidr ∈ [1, IPV4_BITS], so every right-hand
+        // value fits in u32 and the shift never overflows.
+        0xFFFF_FFFFu32 << (IPV4_BITS - cidr)
     }
 }
 
-fn ip_class(ip_value: i64) -> &'static str {
+fn cidr_to_mask_v4(cidr: u32) -> i64 {
+    i64::from(cidr_to_mask_v4_u32(cidr))
+}
+
+const fn ip_class(ip_value: i64) -> &'static str {
     let first_octet = ((ip_value >> 24) & 0xFF) as i32;
     if first_octet <= 127 {
         "A"
@@ -350,10 +357,11 @@ fn parse_ipv6_for(tool: &str, address: &str) -> Result<BigInt, String> {
 }
 
 fn big_int_to_ipv6_full(value: &BigInt) -> String {
+    use std::fmt::Write as _;
     let (_, mag) = value.to_bytes_be();
     let mut raw = String::with_capacity(32);
     for byte in &mag {
-        raw.push_str(&format!("{byte:02x}"));
+        write!(&mut raw, "{byte:02x}").expect("write to String never fails");
     }
     let hex = if raw.len() >= 32 {
         raw[raw.len() - 32..].to_string()
@@ -403,15 +411,14 @@ fn to_binary16(group: u32) -> String {
 
 fn validate_cidr_for(tool: &str, cidr: i32, ipv6: bool) -> Result<u32, String> {
     let max: i32 = if ipv6 { 128 } else { 32 };
-    if cidr < 0 || cidr > max {
-        return Err(error_with_detail(
+    u32::try_from(cidr).ok().filter(|v| *v <= max.unsigned_abs()).ok_or_else(|| {
+        error_with_detail(
             tool,
             ErrorCode::OutOfRange,
             &format!("CIDR must be between 0 and {max}"),
             &format!("cidr={cidr}"),
-        ));
-    }
-    Ok(cidr as u32)
+        )
+    })
 }
 
 // ------------------------------------------------------------------ //
@@ -503,7 +510,7 @@ fn subnet_v6(address: &str, cidr: i32) -> String {
     let (first_host, last_host, usable_hosts) = if host_bits == 0 {
         (network.clone(), network.clone(), BigInt::zero())
     } else if host_bits == 1 {
-        (network.clone(), last.clone(), BigInt::from(2u32))
+        (network.clone(), last, BigInt::from(2u32))
     } else {
         (
             &network + BigInt::one(),
@@ -524,6 +531,12 @@ fn subnet_v6(address: &str, cidr: i32) -> String {
 //  Binary conversion
 // ------------------------------------------------------------------ //
 
+fn octet_of(value: i64, shift: u32) -> u32 {
+    // `& 0xFF` always produces a non-negative value in 0..=255, so the
+    // round-trip through u32 is guaranteed lossless.
+    u32::try_from((value >> shift) & 0xFF).expect("masked octet fits in u32")
+}
+
 fn ipv4_to_binary(address: &str) -> String {
     let value = match parse_ipv4_for(IP_TO_BINARY, address) {
         Ok(v) => v,
@@ -531,10 +544,10 @@ fn ipv4_to_binary(address: &str) -> String {
     };
     let bin = format!(
         "{}.{}.{}.{}",
-        to_binary8(((value >> 24) & 0xFF) as u32),
-        to_binary8(((value >> 16) & 0xFF) as u32),
-        to_binary8(((value >> 8) & 0xFF) as u32),
-        to_binary8((value & 0xFF) as u32)
+        to_binary8(octet_of(value, 24)),
+        to_binary8(octet_of(value, 16)),
+        to_binary8(octet_of(value, 8)),
+        to_binary8(octet_of(value, 0)),
     );
     Response::ok(IP_TO_BINARY).result(bin).build()
 }
@@ -550,16 +563,13 @@ fn ipv6_to_binary(address: &str) -> String {
         if idx > 0 {
             out.push(':');
         }
-        let parsed = match u32::from_str_radix(group, 16) {
-            Ok(v) => v,
-            Err(_) => {
-                return error_with_detail(
-                    IP_TO_BINARY,
-                    ErrorCode::ParseError,
-                    "address is not a valid IPv6 address",
-                    &format!("address={address}"),
-                );
-            }
+        let Ok(parsed) = u32::from_str_radix(group, 16) else {
+            return error_with_detail(
+                IP_TO_BINARY,
+                ErrorCode::ParseError,
+                "address is not a valid IPv6 address",
+                &format!("address={address}"),
+            );
         };
         out.push_str(&to_binary16(parsed));
     }
@@ -578,16 +588,13 @@ fn binary_to_ipv4(binary: &str) -> String {
     }
     let mut value: i64 = 0;
     for part in &parts {
-        let group = match i64::from_str_radix(part, 2) {
-            Ok(v) => v,
-            Err(_) => {
-                return error_with_detail(
-                    BINARY_TO_IP,
-                    ErrorCode::ParseError,
-                    "expected 4 dot-separated 8-bit groups",
-                    &format!("binary={binary}"),
-                );
-            }
+        let Ok(group) = i64::from_str_radix(part, 2) else {
+            return error_with_detail(
+                BINARY_TO_IP,
+                ErrorCode::ParseError,
+                "expected 4 dot-separated 8-bit groups",
+                &format!("binary={binary}"),
+            );
         };
         value = (value << 8) | group;
     }
@@ -608,16 +615,13 @@ fn binary_to_ipv6(binary: &str) -> String {
     }
     let mut value = BigInt::zero();
     for part in &parts {
-        let group = match u32::from_str_radix(part, 2) {
-            Ok(v) => v,
-            Err(_) => {
-                return error_with_detail(
-                    BINARY_TO_IP,
-                    ErrorCode::ParseError,
-                    "expected 8 colon-separated 16-bit groups",
-                    &format!("binary={binary}"),
-                );
-            }
+        let Ok(group) = u32::from_str_radix(part, 2) else {
+            return error_with_detail(
+                BINARY_TO_IP,
+                ErrorCode::ParseError,
+                "expected 8 colon-separated 16-bit groups",
+                &format!("binary={binary}"),
+            );
         };
         value = (value << 16) | BigInt::from(group);
     }
@@ -632,43 +636,37 @@ fn binary_to_ipv6(binary: &str) -> String {
 
 fn compress_ipv6_groups(full: &str) -> String {
     let groups: Vec<&str> = full.split(':').collect();
-    let mut best_start: isize = -1;
-    let mut best_len: usize = 0;
-    let mut cur_start: isize = -1;
-    let mut cur_len: usize = 0;
+    let mut best: Option<(usize, usize)> = None;
+    let mut cur: Option<(usize, usize)> = None;
 
     for (idx, group) in groups.iter().enumerate() {
         if *group == "0000" {
-            if cur_start < 0 {
-                cur_start = idx as isize;
-                cur_len = 1;
-            } else {
-                cur_len += 1;
-            }
+            cur = Some(cur.map_or((idx, 1), |(start, len)| (start, len + 1)));
         } else {
-            if cur_len > best_len {
-                best_start = cur_start;
-                best_len = cur_len;
+            if let Some((start, len)) = cur
+                && len > best.map_or(0, |(_, b)| b)
+            {
+                best = Some((start, len));
             }
-            cur_start = -1;
-            cur_len = 0;
+            cur = None;
         }
     }
-    if cur_len > best_len {
-        best_start = cur_start;
-        best_len = cur_len;
+    if let Some((start, len)) = cur
+        && len > best.map_or(0, |(_, b)| b)
+    {
+        best = Some((start, len));
     }
-    build_compressed(&groups, best_start, best_len)
+    build_compressed(&groups, best)
 }
 
-fn build_compressed(groups: &[&str], best_start: isize, best_len: usize) -> String {
-    if best_len < MIN_COMPRESS_LEN {
-        join_trimmed(groups, 0, groups.len())
-    } else {
-        let start = best_start as usize;
-        let left = join_trimmed(groups, 0, start);
-        let right = join_trimmed(groups, start + best_len, groups.len());
-        format!("{left}::{right}")
+fn build_compressed(groups: &[&str], best: Option<(usize, usize)>) -> String {
+    match best {
+        Some((start, len)) if len >= MIN_COMPRESS_LEN => {
+            let left = join_trimmed(groups, 0, start);
+            let right = join_trimmed(groups, start + len, groups.len());
+            format!("{left}::{right}")
+        }
+        _ => join_trimmed(groups, 0, groups.len()),
     }
 }
 
@@ -696,82 +694,99 @@ fn trim_leading_zeros(group: &str) -> String {
 //  VLSM
 // ------------------------------------------------------------------ //
 
-fn compute_vlsm(network_cidr: &str, host_counts_json: &str) -> String {
+struct VlsmPlan {
+    base_network: i64,
+    base_end: i64,
+    base_cidr: u32,
+    counts: Vec<i32>,
+}
+
+fn parse_vlsm_inputs(network_cidr: &str, host_counts_json: &str) -> Result<VlsmPlan, String> {
     let cidr_parts: Vec<&str> = network_cidr.split('/').collect();
     if cidr_parts.len() != 2 {
-        return error_with_detail(
+        return Err(error_with_detail(
             VLSM_SUBNETS,
             ErrorCode::ParseError,
             "expected network/prefix form",
             &format!("cidr={network_cidr}"),
-        );
+        ));
     }
-    let base_network = match parse_ipv4_for(VLSM_SUBNETS, cidr_parts[0]) {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let base_cidr: i32 = match cidr_parts[1].parse() {
-        Ok(v) => v,
-        Err(_) => {
-            return error_with_detail(
-                VLSM_SUBNETS,
-                ErrorCode::ParseError,
-                "prefix is not a valid integer",
-                &format!("cidr={}", cidr_parts[1]),
-            );
-        }
-    };
-    let base_cidr_u = match validate_cidr_for(VLSM_SUBNETS, base_cidr, false) {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let base_mask = cidr_to_mask_v4(base_cidr_u);
+    let base_network = parse_ipv4_for(VLSM_SUBNETS, cidr_parts[0])?;
+    let base_cidr_raw: i32 = cidr_parts[1].parse().map_err(|_| {
+        error_with_detail(
+            VLSM_SUBNETS,
+            ErrorCode::ParseError,
+            "prefix is not a valid integer",
+            &format!("cidr={}", cidr_parts[1]),
+        )
+    })?;
+    let base_cidr = validate_cidr_for(VLSM_SUBNETS, base_cidr_raw, false)?;
+    let base_mask = cidr_to_mask_v4(base_cidr);
     let base_end = base_network | (!base_mask & 0xFFFF_FFFF_i64);
-
-    let mut counts = match parse_int_array(VLSM_SUBNETS, host_counts_json) {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
+    let mut counts = parse_int_array(VLSM_SUBNETS, host_counts_json)?;
     if counts.is_empty() {
-        return error(
+        return Err(error(
             VLSM_SUBNETS,
             ErrorCode::InvalidInput,
             "host counts array must not be empty",
-        );
+        ));
     }
-    // Reject zero and negative host counts — the allocator used to silently
-    // accept them and produce /31 allocations with nonsensical usable=-1.
     if let Some(&bad) = counts.iter().find(|&&n| n < 1) {
-        return error_with_detail(
+        return Err(error_with_detail(
             VLSM_SUBNETS,
             ErrorCode::InvalidInput,
             "each host count must be a positive integer",
             &format!("hosts={bad}"),
-        );
+        ));
     }
     counts.sort_by(|a, b| b.cmp(a));
+    Ok(VlsmPlan {
+        base_network,
+        base_end,
+        base_cidr,
+        counts,
+    })
+}
 
-    let mut pointer = base_network;
+fn required_subnet_cidr(needed: i32, base_cidr: u32) -> Result<u32, String> {
+    let host_bits = ceil_log2(needed + 2);
+    let prefix_bits = i64::from(IPV4_BITS) - i64::from(host_bits);
+    if prefix_bits < i64::from(base_cidr) {
+        return Err(error_with_detail(
+            VLSM_SUBNETS,
+            ErrorCode::InvalidInput,
+            &format!("cannot fit {needed} hosts in /{base_cidr}"),
+            &format!("hosts={needed}"),
+        ));
+    }
+    // prefix_bits is now in [base_cidr, IPV4_BITS], so the conversion is
+    // lossless.
+    u32::try_from(prefix_bits).map_err(|_| {
+        error(
+            VLSM_SUBNETS,
+            ErrorCode::InvalidInput,
+            "subnet CIDR out of range",
+        )
+    })
+}
+
+fn compute_vlsm(network_cidr: &str, host_counts_json: &str) -> String {
+    let plan = match parse_vlsm_inputs(network_cidr, host_counts_json) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let mut pointer = plan.base_network;
     let mut response = Response::ok(VLSM_SUBNETS)
-        .field("COUNT", counts.len().to_string())
+        .field("COUNT", plan.counts.len().to_string())
         .block();
-
-    for (idx, &needed) in counts.iter().enumerate() {
-        let host_bits = ceil_log2(needed + 2);
-        let subnet_cidr_i = IPV4_BITS as i32 - host_bits;
-        if subnet_cidr_i < base_cidr {
-            return error_with_detail(
-                VLSM_SUBNETS,
-                ErrorCode::InvalidInput,
-                &format!("cannot fit {needed} hosts in /{base_cidr}"),
-                &format!("hosts={needed}"),
-            );
-        }
-        let subnet_cidr = subnet_cidr_i as u32;
-
+    for (idx, &needed) in plan.counts.iter().enumerate() {
+        let subnet_cidr = match required_subnet_cidr(needed, plan.base_cidr) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         let sub_mask = cidr_to_mask_v4(subnet_cidr);
         let sub_broadcast = pointer | (!sub_mask & 0xFFFF_FFFF_i64);
-        if sub_broadcast > base_end {
+        if sub_broadcast > plan.base_end {
             return error(
                 VLSM_SUBNETS,
                 ErrorCode::InvalidInput,
@@ -791,7 +806,7 @@ fn compute_vlsm(network_cidr: &str, host_counts_json: &str) -> String {
     response.build()
 }
 
-fn ceil_log2(value: i32) -> i32 {
+const fn ceil_log2(value: i32) -> i32 {
     let mut bits: i32 = 0;
     let mut remaining = value - 1;
     while remaining > 0 {
@@ -805,6 +820,47 @@ fn ceil_log2(value: i32) -> i32 {
 //  Summarize subnets
 // ------------------------------------------------------------------ //
 
+fn parse_cidr_entry(entry: &str) -> Result<(u32, u32), String> {
+    let parts: Vec<&str> = entry.split('/').collect();
+    if parts.len() != 2 {
+        return Err(error_with_detail(
+            SUMMARIZE_SUBNETS,
+            ErrorCode::ParseError,
+            "expected network/prefix form",
+            &format!("cidr={entry}"),
+        ));
+    }
+    let network_i64 = parse_ipv4_for(SUMMARIZE_SUBNETS, parts[0])?;
+    let network = u32::try_from(network_i64 & 0xFFFF_FFFF_i64).expect("IPv4 32-bit mask");
+    let prefix_raw: i32 = parts[1].parse().map_err(|_| {
+        error_with_detail(
+            SUMMARIZE_SUBNETS,
+            ErrorCode::ParseError,
+            "prefix is not a valid integer",
+            &format!("cidr={}", parts[1]),
+        )
+    })?;
+    let prefix = validate_cidr_for(SUMMARIZE_SUBNETS, prefix_raw, false)?;
+    Ok((network, prefix))
+}
+
+fn summary_range(cidr_list: &[String]) -> Result<(u32, u32), String> {
+    let mut min_network: u32 = u32::MAX;
+    let mut max_broadcast: u32 = 0;
+    for cidr in cidr_list {
+        let (network, prefix) = parse_cidr_entry(cidr)?;
+        let mask = cidr_to_mask_v4_u32(prefix);
+        let broadcast = network | !mask;
+        if network < min_network {
+            min_network = network;
+        }
+        if broadcast > max_broadcast {
+            max_broadcast = broadcast;
+        }
+    }
+    Ok((min_network, max_broadcast))
+}
+
 fn compute_summary(subnets_json: &str) -> String {
     let cidr_list = match parse_string_array(SUMMARIZE_SUBNETS, subnets_json) {
         Ok(v) => v,
@@ -817,54 +873,15 @@ fn compute_summary(subnets_json: &str) -> String {
             "subnet list must not be empty",
         );
     }
-    let mut min_network: u32 = u32::MAX;
-    let mut max_broadcast: u32 = 0;
-    for cidr in &cidr_list {
-        let parts: Vec<&str> = cidr.split('/').collect();
-        if parts.len() != 2 {
-            return error_with_detail(
-                SUMMARIZE_SUBNETS,
-                ErrorCode::ParseError,
-                "expected network/prefix form",
-                &format!("cidr={cidr}"),
-            );
-        }
-        let network = match parse_ipv4_for(SUMMARIZE_SUBNETS, parts[0]) {
-            Ok(v) => v as u32,
-            Err(e) => return e,
-        };
-        let prefix: i32 = match parts[1].parse() {
-            Ok(v) => v,
-            Err(_) => {
-                return error_with_detail(
-                    SUMMARIZE_SUBNETS,
-                    ErrorCode::ParseError,
-                    "prefix is not a valid integer",
-                    &format!("cidr={}", parts[1]),
-                );
-            }
-        };
-        let prefix_u = match validate_cidr_for(SUMMARIZE_SUBNETS, prefix, false) {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        let mask = cidr_to_mask_v4(prefix_u) as u32;
-        let broadcast = network | !mask;
-        if network < min_network {
-            min_network = network;
-        }
-        if broadcast > max_broadcast {
-            max_broadcast = broadcast;
-        }
-    }
+    let (min_network, max_broadcast) = match summary_range(&cidr_list) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
     // Longest-common-prefix algorithm: count the matching high-order bits of
     // min_network and max_broadcast. That prefix length IS the supernet CIDR.
-    // The previous implementation computed (range + 1) in `i32`, which
-    // overflowed for wide ranges (e.g. 10/8 + 172.16/12 + 192.168/16) and
-    // produced a nonsensical `10.0.0.0/32` result.
     let diff: u32 = min_network ^ max_broadcast;
     let super_cidr: u32 = if diff == 0 { IPV4_BITS } else { diff.leading_zeros() };
-    let super_mask = cidr_to_mask_v4(super_cidr) as u32;
+    let super_mask = cidr_to_mask_v4_u32(super_cidr);
     let super_network = min_network & super_mask;
     let summary = format!(
         "{}/{}",
@@ -926,62 +943,65 @@ fn parse_decimal_for(tool: &str, input: &str, label: &str) -> Result<BigDecimal,
     })
 }
 
+struct TransferInputs {
+    size_value: BigDecimal,
+    size_unit: String,
+    bandwidth_value: BigDecimal,
+    bw_unit: String,
+}
+
+fn parse_transfer_inputs(
+    file_size: &str,
+    file_size_unit: &str,
+    bandwidth: &str,
+    bandwidth_unit: &str,
+) -> Result<TransferInputs, String> {
+    let size_unit = file_size_unit.to_ascii_lowercase();
+    let bw_unit = bandwidth_unit.to_ascii_lowercase();
+    require_category_for(TRANSFER_TIME, &size_unit, UnitCategory::DataStorage, "fileSizeUnit")?;
+    require_category_for(TRANSFER_TIME, &bw_unit, UnitCategory::DataRate, "bandwidthUnit")?;
+    let size_value = parse_decimal_for(TRANSFER_TIME, file_size, "fileSize")?;
+    let bandwidth_value = parse_decimal_for(TRANSFER_TIME, bandwidth, "bandwidth")?;
+    if size_value.is_negative() {
+        return Err(error_with_detail(
+            TRANSFER_TIME,
+            ErrorCode::InvalidInput,
+            "file size must not be negative",
+            &format!("fileSize={file_size}"),
+        ));
+    }
+    if bandwidth_value.is_zero() || bandwidth_value.is_negative() {
+        return Err(error_with_detail(
+            TRANSFER_TIME,
+            ErrorCode::InvalidInput,
+            "bandwidth must be positive",
+            &format!("bandwidth={bandwidth}"),
+        ));
+    }
+    Ok(TransferInputs {
+        size_value,
+        size_unit,
+        bandwidth_value,
+        bw_unit,
+    })
+}
+
 fn compute_transfer_time(
     file_size: &str,
     file_size_unit: &str,
     bandwidth: &str,
     bandwidth_unit: &str,
 ) -> String {
-    let size_unit = file_size_unit.to_ascii_lowercase();
-    let bw_unit = bandwidth_unit.to_ascii_lowercase();
-    if let Err(e) = require_category_for(
-        TRANSFER_TIME,
-        &size_unit,
-        UnitCategory::DataStorage,
-        "fileSizeUnit",
-    ) {
-        return e;
-    }
-    if let Err(e) = require_category_for(
-        TRANSFER_TIME,
-        &bw_unit,
-        UnitCategory::DataRate,
-        "bandwidthUnit",
-    ) {
-        return e;
-    }
-
-    let size_value = match parse_decimal_for(TRANSFER_TIME, file_size, "fileSize") {
+    let inputs = match parse_transfer_inputs(file_size, file_size_unit, bandwidth, bandwidth_unit) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let bandwidth_value = match parse_decimal_for(TRANSFER_TIME, bandwidth, "bandwidth") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    if size_value.is_negative() {
-        return error_with_detail(
-            TRANSFER_TIME,
-            ErrorCode::InvalidInput,
-            "file size must not be negative",
-            &format!("fileSize={file_size}"),
-        );
-    }
-    if bandwidth_value.is_zero() || bandwidth_value.is_negative() {
-        return error_with_detail(
-            TRANSFER_TIME,
-            ErrorCode::InvalidInput,
-            "bandwidth must be positive",
-            &format!("bandwidth={bandwidth}"),
-        );
-    }
-
-    let size_bytes = match unit_convert_for(TRANSFER_TIME, &size_value, &size_unit, "byte") {
+    let size_bytes = match unit_convert_for(TRANSFER_TIME, &inputs.size_value, &inputs.size_unit, "byte") {
         Ok(v) => v,
         Err(e) => return e,
     };
     let size_bits = mul_ctx(&size_bytes, &BigDecimal::from(BITS_PER_BYTE));
-    let bps = match unit_convert_for(TRANSFER_TIME, &bandwidth_value, &bw_unit, "bps") {
+    let bps = match unit_convert_for(TRANSFER_TIME, &inputs.bandwidth_value, &inputs.bw_unit, "bps") {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -992,16 +1012,62 @@ fn compute_transfer_time(
             "bandwidth must be greater than zero",
         );
     }
-
     let seconds = div_scaled(&size_bits, &bps);
     let minutes = div_scaled(&seconds, &BigDecimal::from(60));
     let hours = div_scaled(&seconds, &BigDecimal::from(3600));
-
     Response::ok(TRANSFER_TIME)
         .field("SECONDS", strip(&seconds))
         .field("MINUTES", strip(&minutes))
         .field("HOURS", strip(&hours))
         .build()
+}
+
+struct ThroughputInputs {
+    size_value: BigDecimal,
+    size_unit: String,
+    time_value: BigDecimal,
+    tu: String,
+    out_unit: String,
+}
+
+fn parse_throughput_inputs(
+    data_size: &str,
+    data_size_unit: &str,
+    time: &str,
+    time_unit: &str,
+    output_unit: &str,
+) -> Result<ThroughputInputs, String> {
+    let size_unit = data_size_unit.to_ascii_lowercase();
+    let tu = time_unit.to_ascii_lowercase();
+    let out_unit = output_unit.to_ascii_lowercase();
+    require_category_for(THROUGHPUT, &size_unit, UnitCategory::DataStorage, "dataSizeUnit")?;
+    require_category_for(THROUGHPUT, &tu, UnitCategory::Time, "timeUnit")?;
+    require_category_for(THROUGHPUT, &out_unit, UnitCategory::DataRate, "outputUnit")?;
+    let size_value = parse_decimal_for(THROUGHPUT, data_size, "dataSize")?;
+    let time_value = parse_decimal_for(THROUGHPUT, time, "time")?;
+    if size_value.is_negative() {
+        return Err(error_with_detail(
+            THROUGHPUT,
+            ErrorCode::InvalidInput,
+            "data size must not be negative",
+            &format!("dataSize={data_size}"),
+        ));
+    }
+    if time_value.is_zero() || time_value.is_negative() {
+        return Err(error_with_detail(
+            THROUGHPUT,
+            ErrorCode::InvalidInput,
+            "time must be positive",
+            &format!("time={time}"),
+        ));
+    }
+    Ok(ThroughputInputs {
+        size_value,
+        size_unit,
+        time_value,
+        tu,
+        out_unit,
+    })
 }
 
 fn compute_throughput(
@@ -1011,58 +1077,16 @@ fn compute_throughput(
     time_unit: &str,
     output_unit: &str,
 ) -> String {
-    let size_unit = data_size_unit.to_ascii_lowercase();
-    let tu = time_unit.to_ascii_lowercase();
-    let out_unit = output_unit.to_ascii_lowercase();
-
-    if let Err(e) = require_category_for(
-        THROUGHPUT,
-        &size_unit,
-        UnitCategory::DataStorage,
-        "dataSizeUnit",
-    ) {
-        return e;
-    }
-    if let Err(e) = require_category_for(THROUGHPUT, &tu, UnitCategory::Time, "timeUnit") {
-        return e;
-    }
-    if let Err(e) =
-        require_category_for(THROUGHPUT, &out_unit, UnitCategory::DataRate, "outputUnit")
-    {
-        return e;
-    }
-
-    let size_value = match parse_decimal_for(THROUGHPUT, data_size, "dataSize") {
+    let inputs = match parse_throughput_inputs(data_size, data_size_unit, time, time_unit, output_unit) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let time_value = match parse_decimal_for(THROUGHPUT, time, "time") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    if size_value.is_negative() {
-        return error_with_detail(
-            THROUGHPUT,
-            ErrorCode::InvalidInput,
-            "data size must not be negative",
-            &format!("dataSize={data_size}"),
-        );
-    }
-    if time_value.is_zero() || time_value.is_negative() {
-        return error_with_detail(
-            THROUGHPUT,
-            ErrorCode::InvalidInput,
-            "time must be positive",
-            &format!("time={time}"),
-        );
-    }
-
-    let size_bytes = match unit_convert_for(THROUGHPUT, &size_value, &size_unit, "byte") {
+    let size_bytes = match unit_convert_for(THROUGHPUT, &inputs.size_value, &inputs.size_unit, "byte") {
         Ok(v) => v,
         Err(e) => return e,
     };
     let size_bits = mul_ctx(&size_bytes, &BigDecimal::from(BITS_PER_BYTE));
-    let seconds = match unit_convert_for(THROUGHPUT, &time_value, &tu, "s") {
+    let seconds = match unit_convert_for(THROUGHPUT, &inputs.time_value, &inputs.tu, "s") {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -1074,7 +1098,7 @@ fn compute_throughput(
         );
     }
     let bps = div_scaled(&size_bits, &seconds);
-    let result = match unit_convert_for(THROUGHPUT, &bps, "bps", &out_unit) {
+    let result = match unit_convert_for(THROUGHPUT, &bps, "bps", &inputs.out_unit) {
         Ok(v) => v,
         Err(e) => return e,
     };

@@ -33,6 +33,7 @@ const TOOL_DATETIME_DIFFERENCE: &str = "DATETIME_DIFFERENCE";
 // --------------------------------------------------------------------------- //
 
 /// Convert a datetime string from one IANA timezone to another, returning ISO-zoned form.
+#[must_use] 
 pub fn convert_timezone(datetime: &str, from_timezone: &str, to_timezone: &str) -> String {
     let from_zone = match resolve_zone(TOOL_CONVERT_TIMEZONE, from_timezone) {
         Ok(zone) => zone,
@@ -56,6 +57,7 @@ pub fn convert_timezone(datetime: &str, from_timezone: &str, to_timezone: &str) 
 }
 
 /// Reformat a datetime string using explicit input/output format keywords or strftime patterns.
+#[must_use] 
 pub fn format_datetime(
     datetime: &str,
     input_format: &str,
@@ -77,6 +79,7 @@ pub fn format_datetime(
 }
 
 /// Current datetime in the given IANA timezone, rendered using a format keyword or strftime pattern.
+#[must_use] 
 pub fn current_datetime(timezone: &str, format: &str) -> String {
     let zone = match resolve_zone(TOOL_CURRENT_DATE_TIME, timezone) {
         Ok(zone) => zone,
@@ -91,6 +94,7 @@ pub fn current_datetime(timezone: &str, format: &str) -> String {
 
 /// List IANA timezone IDs, filtered by region prefix. Empty string or `"all"`
 /// returns every zone. Output is a single `VALUES` field carrying a CSV.
+#[must_use] 
 pub fn list_timezones(region: &str) -> String {
     let trimmed = region.trim();
     let region_label = if trimmed.is_empty() { "all" } else { trimmed };
@@ -125,6 +129,7 @@ pub fn list_timezones(region: &str) -> String {
 }
 
 /// Compute the positive difference between two datetimes parsed in `timezone`.
+#[must_use] 
 pub fn datetime_difference(datetime1: &str, datetime2: &str, timezone: &str) -> String {
     let zone = match resolve_zone(TOOL_DATETIME_DIFFERENCE, timezone) {
         Ok(zone) => zone,
@@ -169,6 +174,14 @@ fn datetime_parse_error(tool: &str, raw: &str) -> String {
     )
 }
 
+const LOCALE_PATTERNS: &[&str] = &[
+    "%Y-%m-%d %H:%M:%S",
+    "%d/%m/%Y %H:%M:%S",
+    "%m/%d/%Y %H:%M:%S",
+    "%d/%m/%Y",
+    "%m/%d/%Y",
+];
+
 /// Best-effort parse accepting ISO zoned/offset/local forms plus a few common locale patterns.
 fn parse_datetime(tool: &str, datetime: &str, zone: &TimeZone) -> Result<Zoned, String> {
     if let Ok(zoned) = Zoned::from_str(datetime) {
@@ -183,14 +196,7 @@ fn parse_datetime(tool: &str, datetime: &str, zone: &TimeZone) -> Result<Zoned, 
             .map_err(|_| datetime_parse_error(tool, datetime));
     }
 
-    const PATTERNS: &[&str] = &[
-        "%Y-%m-%d %H:%M:%S",
-        "%d/%m/%Y %H:%M:%S",
-        "%m/%d/%Y %H:%M:%S",
-        "%d/%m/%Y",
-        "%m/%d/%Y",
-    ];
-    for pattern in PATTERNS {
+    for pattern in LOCALE_PATTERNS {
         if let Ok(civil) = DateTime::strptime(pattern, datetime) {
             return civil
                 .to_zoned(zone.clone())
@@ -242,17 +248,21 @@ fn parse_with_format(
             if let Ok(zoned) = Zoned::strptime(input_format, datetime) {
                 return Ok(zoned);
             }
-            match DateTime::strptime(input_format, datetime) {
-                Ok(civil) => civil
-                    .to_zoned(zone.clone())
-                    .map_err(|_| datetime_parse_error(tool, datetime)),
-                Err(_) => Err(error_with_detail(
-                    tool,
-                    ErrorCode::InvalidInput,
-                    "format pattern rejected the datetime",
-                    &format!("format={input_format}"),
-                )),
-            }
+            DateTime::strptime(input_format, datetime).map_or_else(
+                |_| {
+                    Err(error_with_detail(
+                        tool,
+                        ErrorCode::InvalidInput,
+                        "format pattern rejected the datetime",
+                        &format!("format={input_format}"),
+                    ))
+                },
+                |civil| {
+                    civil
+                        .to_zoned(zone.clone())
+                        .map_err(|_| datetime_parse_error(tool, datetime))
+                },
+            )
         }
     }
 }
@@ -280,7 +290,21 @@ fn format_output(tool: &str, zoned: &Zoned, format: &str) -> Result<String, Stri
                 "format=rfc1123",
             )
         })?,
-        _ => zoned.strftime(format).to_string(),
+        _ => {
+            // Fallback is strftime; a pattern without any `%` tokens would
+            // render as the literal text and silently lose the datetime.
+            // Reject these explicitly so callers do not see their placeholder
+            // echoed back as a "successful" result.
+            if !format.contains('%') {
+                return Err(error_with_detail(
+                    tool,
+                    ErrorCode::InvalidInput,
+                    "output format is not a recognized keyword or strftime pattern",
+                    &format!("format={format}"),
+                ));
+            }
+            zoned.strftime(format).to_string()
+        }
     })
 }
 
@@ -520,5 +544,34 @@ mod tests {
             datetime_difference("2024-01-01T00:00:00", "2025-01-01T00:00:00", "Not/AZone"),
             "DATETIME_DIFFERENCE: ERROR\nREASON: [INVALID_INPUT] timezone is not a recognized IANA zone\nDETAIL: timezone=Not/AZone"
         );
+    }
+
+    #[test]
+    fn format_datetime_rejects_placeholder_without_tokens() {
+        // Regression: an output format without any `%` token used to be echoed
+        // as the literal text (e.g. outputFormat="invalid_format" returned
+        // RESULT: invalid_format). Should fail with INVALID_INPUT instead.
+        let out = format_datetime("2026-04-22T10:30:00Z", "iso", "invalid_format", "UTC");
+        assert!(out.contains("FORMAT_DATETIME: ERROR"), "got {out}");
+        assert!(out.contains("INVALID_INPUT"), "got {out}");
+        assert!(
+            out.contains("output format is not a recognized keyword or strftime pattern"),
+            "got {out}"
+        );
+        assert!(out.contains("format=invalid_format"), "got {out}");
+    }
+
+    #[test]
+    fn format_datetime_rejects_empty_format() {
+        let out = format_datetime("2026-04-22T10:30:00Z", "iso", "", "UTC");
+        assert!(out.contains("FORMAT_DATETIME: ERROR"), "got {out}");
+        assert!(out.contains("INVALID_INPUT"), "got {out}");
+    }
+
+    #[test]
+    fn format_datetime_accepts_strftime_with_tokens() {
+        // Must still accept strftime patterns that contain `%` tokens.
+        let out = format_datetime("2026-04-22T10:30:00Z", "iso", "%Y-%m-%d", "UTC");
+        assert_eq!(out, "FORMAT_DATETIME: OK | RESULT: 2026-04-22");
     }
 }

@@ -94,10 +94,11 @@ pub fn get_conversion_factor(from_unit: &str, to_unit: &str) -> String {
     }
 }
 
-/// Human-readable explanation of a unit conversion. Multi-field envelope:
-/// `FROM | TO | FACTOR | FORMULA`. For temperature pairs `FACTOR` is empty
-/// and `FORMULA` carries the relationship; for linear pairs `FORMULA` is
-/// empty and `FACTOR` carries the multiplier.
+/// Human-readable explanation of a unit conversion.
+///
+/// Multi-field envelope: `FROM | TO | FACTOR | FORMULA`. For temperature
+/// pairs `FACTOR` is empty and `FORMULA` carries the relationship; for
+/// linear pairs `FORMULA` is empty and `FACTOR` carries the multiplier.
 #[must_use]
 pub fn explain_conversion(from_unit: &str, to_unit: &str) -> String {
     // The registry returns either "1 <from_name> = <factor> <to_name>" for

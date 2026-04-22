@@ -11,6 +11,7 @@
 //! numeric backend differs.
 
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 use std::str::FromStr;
 
 use astro_float::{BigFloat, Consts, Radix, RoundingMode as AfRm};
@@ -21,27 +22,49 @@ use crate::engine::bigdecimal_ext::strip_plain;
 use crate::engine::expression::ExpressionError;
 
 /// Number of decimal digits retained across transcendental round-trips and
-/// division. Tuned to ~38 digits so the BigDecimal payload stays short enough
-/// for LLM consumption while swallowing the binary-to-decimal noise that
-/// astro-float leaks on the last few digits.
+/// division. Tuned to ~38 digits so the `BigDecimal` payload stays short
+/// enough for LLM consumption while swallowing the binary-to-decimal noise
+/// that astro-float leaks on the last few digits.
 const EXACT_PRECISION: u64 = 38;
 /// `astro-float` mantissa precision (in bits) used during transcendentals.
 const AF_PRECISION: usize = 192;
 const DEG_TO_RAD_LITERAL: &str =
     "0.017453292519943295769236907684886127134428718885417254560971914401710091146034";
 
-/// Evaluate an expression exactly. The returned string is a normalized
-/// BigDecimal — trailing zeros stripped, plain (non-scientific) notation.
+/// Evaluate an expression exactly.
+///
+/// The returned string is a normalized `BigDecimal` — trailing zeros stripped,
+/// plain (non-scientific) notation.
+///
+/// # Errors
+/// Returns [`ExpressionError`] if the expression is blank, malformed, references
+/// an unknown variable, calls an unknown function, or triggers a domain
+/// violation (e.g. `sqrt(-1)`, `log(0)`).
+///
+/// # Panics
+/// Panics if the `astro-float` runtime fails to initialize its shared
+/// constants table — practically impossible on a functional allocator.
 pub fn evaluate(expression: &str) -> Result<String, ExpressionError> {
     evaluate_with_variables(expression, &HashMap::new())
 }
 
-/// Evaluate with variable bindings. Values are parsed as BigDecimal, so
-/// passing strings like `"3.141592653589793238462643383279502884"` preserves
-/// every digit — unlike the f64 variant which truncates at ~17 digits.
-pub fn evaluate_with_variables(
+/// Evaluate with variable bindings.
+///
+/// Values are parsed as `BigDecimal`, so passing strings like
+/// `"3.141592653589793238462643383279502884"` preserves every digit — unlike
+/// the f64 variant which truncates at ~17 digits.
+///
+/// # Errors
+/// Returns [`ExpressionError`] on the same conditions as [`evaluate`]: blank
+/// input, malformed syntax, unknown identifier, or transcendental domain
+/// violation.
+///
+/// # Panics
+/// Panics if the `astro-float` runtime fails to initialize its shared
+/// constants table — practically impossible on a functional allocator.
+pub fn evaluate_with_variables<S: BuildHasher>(
     expression: &str,
-    variables: &HashMap<String, String>,
+    variables: &HashMap<String, String, S>,
 ) -> Result<String, ExpressionError> {
     if expression.trim().is_empty() {
         return Err(ExpressionError::Empty);
@@ -220,21 +243,21 @@ fn tan_bd(degrees: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, Expre
 //  Recursive-descent parser
 // --------------------------------------------------------------------------- //
 
-struct Parser<'a, 'c> {
+struct Parser<'a, 'c, S: BuildHasher> {
     input: Vec<char>,
-    variables: &'a HashMap<String, String>,
+    variables: &'a HashMap<String, String, S>,
     pos: usize,
     /// Tracks unmatched `(` count so that an unknown identifier hitting
     /// end-of-input inside an open paren is reported as a parse error
-    /// (unclosed paren) rather than UNKNOWN_VARIABLE.
+    /// (unclosed paren) rather than `UNKNOWN_VARIABLE`.
     paren_depth: u32,
     consts: &'c mut Consts,
 }
 
-impl<'a, 'c> Parser<'a, 'c> {
+impl<'a, 'c, S: BuildHasher> Parser<'a, 'c, S> {
     fn new(
         input: &str,
-        variables: &'a HashMap<String, String>,
+        variables: &'a HashMap<String, String, S>,
         consts: &'c mut Consts,
     ) -> Self {
         Self {
@@ -392,7 +415,7 @@ impl<'a, 'c> Parser<'a, 'c> {
             let argument = self.parse_expression()?;
             self.expect_close_paren()?;
             self.paren_depth -= 1;
-            self.call_function(&name, argument)
+            self.call_function(&name, &argument)
         } else if let Some(value) = self.variables.get(&name) {
             BigDecimal::from_str(value).map_err(|_| ExpressionError::InvalidNumber(value.clone()))
         } else if self.paren_depth > 0 && self.current_char().is_none() {
@@ -417,18 +440,18 @@ impl<'a, 'c> Parser<'a, 'c> {
     fn call_function(
         &mut self,
         name: &str,
-        arg: BigDecimal,
+        arg: &BigDecimal,
     ) -> Result<BigDecimal, ExpressionError> {
         match name {
-            "sin" => sin_bd(&arg, self.consts),
-            "cos" => cos_bd(&arg, self.consts),
-            "tan" => tan_bd(&arg, self.consts),
-            "log" => ln_bd(&arg, self.consts),
-            "log10" => log10_bd(&arg, self.consts),
-            "sqrt" => sqrt_bd(&arg, self.consts),
+            "sin" => sin_bd(arg, self.consts),
+            "cos" => cos_bd(arg, self.consts),
+            "tan" => tan_bd(arg, self.consts),
+            "log" => ln_bd(arg, self.consts),
+            "log10" => log10_bd(arg, self.consts),
+            "sqrt" => sqrt_bd(arg, self.consts),
             "abs" => Ok(arg.abs()),
-            "ceil" => Ok(ceil(&arg)),
-            "floor" => Ok(floor(&arg)),
+            "ceil" => Ok(ceil(arg)),
+            "floor" => Ok(floor(arg)),
             _ => Err(ExpressionError::UnknownFunction(name.to_string())),
         }
     }

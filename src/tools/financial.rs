@@ -25,7 +25,7 @@ const TOOL_AMORTIZATION_SCHEDULE: &str = "AMORTIZATION_SCHEDULE";
 const DISPLAY_SCALE: i64 = 2;
 const MONTHS_PER_YEAR: i64 = 12;
 
-/// DECIMAL128 context: 34 significant digits with HALF_UP rounding.
+/// DECIMAL128 context: 34 significant digits with `HALF_UP` rounding.
 fn decimal128_ctx() -> Context {
     Context::default()
         .with_prec(DECIMAL128_PRECISION)
@@ -120,7 +120,7 @@ fn pow_ctx(base: &BigDecimal, exp: i64) -> BigDecimal {
     base.powi_with_context(exp, &decimal128_ctx())
 }
 
-/// `a / b` at scale 20 with HALF_UP.
+/// `a / b` at scale 20 with `HALF_UP`.
 fn div_scale(a: &BigDecimal, b: &BigDecimal) -> BigDecimal {
     (a / b).with_scale_round(DIVISION_SCALE, RoundingMode::HalfUp)
 }
@@ -158,6 +158,7 @@ fn int_value_exact(
 // --------------------------------------------------------------------------- //
 
 /// Compound interest: `A = P * (1 + r/n)^(n*t)`.
+#[must_use] 
 pub fn compound_interest(
     principal: &str,
     annual_rate: &str,
@@ -211,6 +212,7 @@ pub fn compound_interest(
 }
 
 /// Monthly loan payment (fixed-rate amortizing loan).
+#[must_use] 
 pub fn loan_payment(principal: &str, annual_rate: &str, years: &str) -> String {
     let tool = TOOL_LOAN_PAYMENT;
     let principal_amt = match parse_field(tool, "principal", principal) {
@@ -260,6 +262,7 @@ pub fn loan_payment(principal: &str, annual_rate: &str, years: &str) -> String {
 }
 
 /// Present value of a future amount: `PV = FV / (1 + r)^t`.
+#[must_use] 
 pub fn present_value(future_value: &str, annual_rate: &str, years: &str) -> String {
     let tool = TOOL_PRESENT_VALUE;
     let future_val = match parse_field(tool, "future_value", future_value) {
@@ -298,6 +301,7 @@ pub fn present_value(future_value: &str, annual_rate: &str, years: &str) -> Stri
 }
 
 /// Future value of an ordinary annuity: `FV = PMT * ((1+r)^n - 1) / r`.
+#[must_use] 
 pub fn future_value_annuity(payment: &str, annual_rate: &str, years: &str) -> String {
     let tool = TOOL_FUTURE_VALUE_ANNUITY;
     let pmt = match parse_field(tool, "payment", payment) {
@@ -340,6 +344,7 @@ pub fn future_value_annuity(payment: &str, annual_rate: &str, years: &str) -> St
 }
 
 /// Return on investment as a percentage: `ROI = (gain - cost) / cost * 100`.
+#[must_use] 
 pub fn return_on_investment(gain: &str, cost: &str) -> String {
     let tool = TOOL_RETURN_ON_INVESTMENT;
     let gain_amount = match parse_field(tool, "gain", gain) {
@@ -362,64 +367,77 @@ pub fn return_on_investment(gain: &str, cost: &str) -> String {
 }
 
 /// Generate a monthly amortization schedule as a block-formatted envelope.
-pub fn amortization_schedule(principal: &str, annual_rate: &str, years: &str) -> String {
+struct AmortInputs {
+    principal: BigDecimal,
+    rate: BigDecimal,
+    total_months: i64,
+}
+
+fn parse_amort_inputs(principal: &str, annual_rate: &str, years: &str) -> Result<AmortInputs, String> {
     let tool = TOOL_AMORTIZATION_SCHEDULE;
-    let principal_amt = match parse_field(tool, "principal", principal) {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let rate = match parse_field(tool, "annual_rate", annual_rate) {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let years_dec = match parse_field(tool, "years", years) {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-
-    if let Err(e) = require_positive(tool, &principal_amt, "principal", "principal") {
-        return e;
-    }
-    if let Err(e) = require_non_negative(tool, &rate, "annual rate", "annualRate") {
-        return e;
-    }
-    if let Err(e) = require_positive(tool, &years_dec, "years", "years") {
-        return e;
-    }
-
+    let principal_amt = parse_field(tool, "principal", principal)?;
+    let rate = parse_field(tool, "annual_rate", annual_rate)?;
+    let years_dec = parse_field(tool, "years", years)?;
+    require_positive(tool, &principal_amt, "principal", "principal")?;
+    require_non_negative(tool, &rate, "annual rate", "annualRate")?;
+    require_positive(tool, &years_dec, "years", "years")?;
     let months = mul_ctx(&years_dec, &BigDecimal::from(MONTHS_PER_YEAR));
-    let total_months = match int_value_exact(tool, &months, "total months", "totalMonths") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
+    let total_months = int_value_exact(tool, &months, "total months", "totalMonths")?;
+    Ok(AmortInputs {
+        principal: principal_amt,
+        rate,
+        total_months,
+    })
+}
 
-    let (monthly_rate, monthly_payment) = if rate.is_zero() {
-        let payment = div_scale(&principal_amt, &BigDecimal::from(total_months));
-        (BigDecimal::zero(), payment)
-    } else {
-        let rate_monthly = div_scale(
-            &div_scale(&rate, &hundred()),
-            &BigDecimal::from(MONTHS_PER_YEAR),
-        );
-        let one_plus_r = add_ctx(&one(), &rate_monthly);
-        let one_plus_r_pow_n = pow_ctx(&one_plus_r, total_months);
-        let numerator = mul_ctx(&mul_ctx(&principal_amt, &rate_monthly), &one_plus_r_pow_n);
-        let denominator = sub_ctx(&one_plus_r_pow_n, &one());
-        let payment = div_scale(&numerator, &denominator);
-        (rate_monthly, payment)
-    };
+fn compute_monthly_payment(inputs: &AmortInputs) -> (BigDecimal, BigDecimal) {
+    if inputs.rate.is_zero() {
+        let payment = div_scale(&inputs.principal, &BigDecimal::from(inputs.total_months));
+        return (BigDecimal::zero(), payment);
+    }
+    let rate_monthly = div_scale(
+        &div_scale(&inputs.rate, &hundred()),
+        &BigDecimal::from(MONTHS_PER_YEAR),
+    );
+    let one_plus_r = add_ctx(&one(), &rate_monthly);
+    let one_plus_r_pow_n = pow_ctx(&one_plus_r, inputs.total_months);
+    let numerator = mul_ctx(&mul_ctx(&inputs.principal, &rate_monthly), &one_plus_r_pow_n);
+    let denominator = sub_ctx(&one_plus_r_pow_n, &one());
+    let payment = div_scale(&numerator, &denominator);
+    (rate_monthly, payment)
+}
 
-    let mut balance = principal_amt.clone();
+struct AmortRow {
+    month: i64,
+    payment: String,
+    principal_part: String,
+    interest: String,
+    balance: String,
+}
+
+struct AmortTotals {
+    total_interest: BigDecimal,
+    total_paid: BigDecimal,
+    rows: Vec<AmortRow>,
+}
+
+fn build_amort_rows(
+    inputs: &AmortInputs,
+    monthly_rate: &BigDecimal,
+    monthly_payment: &BigDecimal,
+) -> AmortTotals {
+    // `total_months` is bounded by `int_value_exact` (which rejects anything
+    // out of `i64` range) and is guaranteed non-negative by the positivity
+    // check on `years`, so this conversion is lossless.
+    let capacity = usize::try_from(inputs.total_months).unwrap_or(0);
+    let mut balance = inputs.principal.clone();
     let mut total_interest = BigDecimal::zero();
     let mut total_paid = BigDecimal::zero();
-    let mut rows: Vec<(i64, String, String, String, String)> =
-        Vec::with_capacity(total_months as usize);
-
-    for month in 1..=total_months {
+    let mut rows: Vec<AmortRow> = Vec::with_capacity(capacity);
+    for month in 1..=inputs.total_months {
         let interest =
-            mul_ctx(&balance, &monthly_rate).with_scale_round(DIVISION_SCALE, RoundingMode::HalfUp);
-
-        let (pmt_amount, principal_part) = if month == total_months {
+            mul_ctx(&balance, monthly_rate).with_scale_round(DIVISION_SCALE, RoundingMode::HalfUp);
+        let (pmt_amount, principal_part) = if month == inputs.total_months {
             let principal_part = balance.clone();
             let pmt_amount = add_ctx(&principal_part, &interest);
             balance = BigDecimal::zero();
@@ -430,35 +448,49 @@ pub fn amortization_schedule(principal: &str, annual_rate: &str, years: &str) ->
             balance = sub_ctx(&balance, &principal_part);
             (pmt_amount, principal_part)
         };
-
         total_interest = &total_interest + &format_currency_value(&interest);
         total_paid = &total_paid + &format_currency_value(&pmt_amount);
-
-        rows.push((
+        rows.push(AmortRow {
             month,
-            format_currency(&pmt_amount),
-            format_currency(&principal_part),
-            format_currency(&interest),
-            format_currency(&balance),
-        ));
+            payment: format_currency(&pmt_amount),
+            principal_part: format_currency(&principal_part),
+            interest: format_currency(&interest),
+            balance: format_currency(&balance),
+        });
     }
+    AmortTotals {
+        total_interest,
+        total_paid,
+        rows,
+    }
+}
 
+#[must_use]
+pub fn amortization_schedule(principal: &str, annual_rate: &str, years: &str) -> String {
+    let tool = TOOL_AMORTIZATION_SCHEDULE;
+    let inputs = match parse_amort_inputs(principal, annual_rate, years) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let (monthly_rate, monthly_payment) = compute_monthly_payment(&inputs);
+    let totals = build_amort_rows(&inputs, &monthly_rate, &monthly_payment);
     let mut builder = Response::ok(tool)
         .field("MONTHLY_PAYMENT", format_currency(&monthly_payment))
-        .field("TOTAL_INTEREST", format_currency(&total_interest))
-        .field("TOTAL_PAID", format_currency(&total_paid))
-        .field("MONTHS", total_months.to_string());
-    for (month, payment, principal_part, interest, balance) in rows {
-        let key = format!("ROW_{month}");
+        .field("TOTAL_INTEREST", format_currency(&totals.total_interest))
+        .field("TOTAL_PAID", format_currency(&totals.total_paid))
+        .field("MONTHS", inputs.total_months.to_string());
+    for row in totals.rows {
+        let key = format!("ROW_{}", row.month);
         let value = format!(
-            "month={month} | payment={payment} | principal={principal_part} | interest={interest} | balance={balance}"
+            "month={} | payment={} | principal={} | interest={} | balance={}",
+            row.month, row.payment, row.principal_part, row.interest, row.balance
         );
         builder = builder.field(key, value);
     }
     builder.block().build()
 }
 
-/// Format a `BigDecimal` as a 2-decimal currency string (HALF_UP).
+/// Format a `BigDecimal` as a 2-decimal currency string (`HALF_UP`).
 fn format_currency(value: &BigDecimal) -> String {
     value
         .with_scale_round(DISPLAY_SCALE, RoundingMode::HalfUp)

@@ -40,7 +40,7 @@ const MIN_BASE: i32 = 2;
 const MAX_BASE: i32 = 36;
 const MAX_BITS: i32 = 64;
 
-fn precision() -> NonZeroU64 {
+const fn precision() -> NonZeroU64 {
     NonZeroU64::new(DECIMAL128_PRECISION).expect("precision is non-zero")
 }
 
@@ -76,28 +76,28 @@ fn pow2(bits: u32) -> BigDecimal {
 }
 
 fn check_base(tool: &str, base: i32) -> Result<(), String> {
-    if !(MIN_BASE..=MAX_BASE).contains(&base) {
+    if (MIN_BASE..=MAX_BASE).contains(&base) {
+        Ok(())
+    } else {
         Err(error_with_detail(
             tool,
             ErrorCode::OutOfRange,
             &format!("base must be between {MIN_BASE} and {MAX_BASE}"),
             &format!("base={base}"),
         ))
-    } else {
-        Ok(())
     }
 }
 
 fn check_bit_width(tool: &str, bits: i32) -> Result<(), String> {
-    if !(1..=MAX_BITS).contains(&bits) {
+    if (1..=MAX_BITS).contains(&bits) {
+        Ok(())
+    } else {
         Err(error_with_detail(
             tool,
             ErrorCode::OutOfRange,
             &format!("bit width must be between 1 and {MAX_BITS}"),
             &format!("bits={bits}"),
         ))
-    } else {
-        Ok(())
     }
 }
 
@@ -115,6 +115,7 @@ fn pad_binary(binary: &str, width: usize) -> String {
 }
 
 /// Convert between any two bases (2..=36).
+#[must_use]
 pub fn convert_base(value: &str, from_base: i32, to_base: i32) -> String {
     if let Err(e) = check_base(CONVERT_BASE, from_base) {
         return e;
@@ -122,25 +123,35 @@ pub fn convert_base(value: &str, from_base: i32, to_base: i32) -> String {
     if let Err(e) = check_base(CONVERT_BASE, to_base) {
         return e;
     }
-    match BigInt::from_str_radix(value.trim(), from_base as u32) {
-        Ok(big) => Response::ok(CONVERT_BASE)
-            .result(big.to_str_radix(to_base as u32).to_uppercase())
-            .build(),
-        Err(_) => error_with_detail(
-            CONVERT_BASE,
-            ErrorCode::ParseError,
-            &format!("invalid number for base {from_base}"),
-            &format!("value={value}"),
-        ),
-    }
+    // `from_base` and `to_base` are validated into 2..=36 by `check_base`, so
+    // the `i32 -> u32` cast is safe and non-lossy.
+    let from_base_u = from_base.cast_unsigned();
+    let to_base_u = to_base.cast_unsigned();
+    BigInt::from_str_radix(value.trim(), from_base_u).map_or_else(
+        |_| {
+            error_with_detail(
+                CONVERT_BASE,
+                ErrorCode::ParseError,
+                &format!("invalid number for base {from_base}"),
+                &format!("value={value}"),
+            )
+        },
+        |big| {
+            Response::ok(CONVERT_BASE)
+                .result(big.to_str_radix(to_base_u).to_uppercase())
+                .build()
+        },
+    )
 }
 
 /// Two's-complement encode (`toTwos`) or decode (`fromTwos`).
+#[must_use]
 pub fn twos_complement(value: &str, bits: i32, direction: &str) -> String {
     if let Err(e) = check_bit_width(TWOS_COMPLEMENT, bits) {
         return e;
     }
-    let bits_u = bits as u32;
+    // `bits` is validated into 1..=64 by `check_bit_width`, so the cast is safe.
+    let bits_u = bits.cast_unsigned();
     match direction {
         TO_TWOS => encode_to_twos(value, bits_u),
         FROM_TWOS => decode_from_twos(value, bits_u),
@@ -154,16 +165,13 @@ pub fn twos_complement(value: &str, bits: i32, direction: &str) -> String {
 }
 
 fn encode_to_twos(value: &str, bits: u32) -> String {
-    let parsed = match BigInt::from_str(value.trim()) {
-        Ok(v) => v,
-        Err(_) => {
-            return error_with_detail(
-                TWOS_COMPLEMENT,
-                ErrorCode::ParseError,
-                "value is not a valid integer",
-                &format!("value={value}"),
-            );
-        }
+    let Ok(parsed) = BigInt::from_str(value.trim()) else {
+        return error_with_detail(
+            TWOS_COMPLEMENT,
+            ErrorCode::ParseError,
+            "value is not a valid integer",
+            &format!("value={value}"),
+        );
     };
     // Reject values outside the signed range; the old implementation silently
     // truncated via `value & mask`, so `toTwos(1024, bits=8)` returned
@@ -190,16 +198,13 @@ fn encode_to_twos(value: &str, bits: u32) -> String {
 
 fn decode_from_twos(value: &str, bits: u32) -> String {
     let trimmed = value.trim();
-    let parsed = match BigInt::from_str_radix(trimmed, 2) {
-        Ok(v) => v,
-        Err(_) => {
-            return error_with_detail(
-                TWOS_COMPLEMENT,
-                ErrorCode::ParseError,
-                "value is not a valid binary string",
-                &format!("value={value}"),
-            );
-        }
+    let Ok(parsed) = BigInt::from_str_radix(trimmed, 2) else {
+        return error_with_detail(
+            TWOS_COMPLEMENT,
+            ErrorCode::ParseError,
+            "value is not a valid binary string",
+            &format!("value={value}"),
+        );
     };
     let msb_set = trimmed.starts_with('1') && trimmed.len() == bits as usize;
     let result = if msb_set {
@@ -211,6 +216,7 @@ fn decode_from_twos(value: &str, bits: u32) -> String {
 }
 
 /// Gray-code encode (`toGray`) or decode (`fromGray`).
+#[must_use] 
 pub fn gray_code(value: &str, direction: &str) -> String {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.chars().any(|c| c != '0' && c != '1') {
@@ -255,24 +261,22 @@ fn decode_gray_to_binary(binary: &str, width: usize) -> String {
 }
 
 /// Bitwise AND/OR/XOR/NOT/SHL/SHR. Returns the decimal result.
+#[must_use]
 pub fn bitwise_op(a: &str, b: &str, operation: &str) -> String {
-    let val_a = match BigInt::from_str(a.trim()) {
-        Ok(v) => v,
-        Err(_) => {
-            return error_with_detail(
-                BITWISE_OP,
-                ErrorCode::ParseError,
-                "operand A is not a valid integer",
-                &format!("a={a}"),
-            );
-        }
+    let Ok(val_a) = BigInt::from_str(a.trim()) else {
+        return error_with_detail(
+            BITWISE_OP,
+            ErrorCode::ParseError,
+            "operand A is not a valid integer",
+            &format!("a={a}"),
+        );
     };
     let op = operation.to_ascii_uppercase();
     let computed: Option<BigInt> = match op.as_str() {
         "AND" => BigInt::from_str(b.trim()).ok().map(|vb| &val_a & &vb),
         "OR" => BigInt::from_str(b.trim()).ok().map(|vb| &val_a | &vb),
         "XOR" => BigInt::from_str(b.trim()).ok().map(|vb| &val_a ^ &vb),
-        "NOT" => Some(!val_a.clone()),
+        "NOT" => Some(!val_a),
         "SHL" => b.trim().parse::<u32>().ok().map(|shift| &val_a << shift),
         "SHR" => b.trim().parse::<u32>().ok().map(|shift| &val_a >> shift),
         _ => {
@@ -284,18 +288,21 @@ pub fn bitwise_op(a: &str, b: &str, operation: &str) -> String {
             );
         }
     };
-    match computed {
-        Some(value) => Response::ok(BITWISE_OP).result(value.to_string()).build(),
-        None => error_with_detail(
-            BITWISE_OP,
-            ErrorCode::ParseError,
-            "operand B is not a valid integer",
-            &format!("b={b}"),
-        ),
-    }
+    computed.map_or_else(
+        || {
+            error_with_detail(
+                BITWISE_OP,
+                ErrorCode::ParseError,
+                "operand B is not a valid integer",
+                &format!("b={b}"),
+            )
+        },
+        |value| Response::ok(BITWISE_OP).result(value.to_string()).build(),
+    )
 }
 
 /// ADC resolution: `lsb = Vref / 2^bits`, `stepCount = 2^bits - 1`.
+#[must_use]
 pub fn adc_resolution(bits: i32, vref: &str) -> String {
     if let Err(e) = check_bit_width(ADC_RESOLUTION, bits) {
         return e;
@@ -304,7 +311,8 @@ pub fn adc_resolution(bits: i32, vref: &str) -> String {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let levels = pow2(bits as u32);
+    // `bits` is validated into 1..=64 by `check_bit_width`, so the cast is safe.
+    let levels = pow2(bits.cast_unsigned());
     let lsb = div_scaled(&vref_v, &levels);
     let step_count = sub_ctx(&levels, &BigDecimal::from(1));
     Response::ok(ADC_RESOLUTION)
@@ -315,6 +323,7 @@ pub fn adc_resolution(bits: i32, vref: &str) -> String {
 }
 
 /// DAC output voltage: Vout = Vref * code / 2^bits.
+#[must_use] 
 pub fn dac_output(bits: i32, vref: &str, code: i64) -> String {
     if let Err(e) = check_bit_width(DAC_OUTPUT, bits) {
         return e;
@@ -336,7 +345,8 @@ pub fn dac_output(bits: i32, vref: &str, code: i64) -> String {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let levels = pow2(bits as u32);
+    // `bits` is validated into 1..=64 by `check_bit_width`, so the cast is safe.
+    let levels = pow2(bits.cast_unsigned());
     let vout = div_scaled(&mul_ctx(&vref_v, &BigDecimal::from(code)), &levels);
     Response::ok(DAC_OUTPUT)
         .field("BITS", bits.to_string())
@@ -346,81 +356,113 @@ pub fn dac_output(bits: i32, vref: &str, code: i64) -> String {
 }
 
 /// 555-timer astable output: frequency, period, dutyCycle (%), high/low time.
-pub fn timer_555_astable(r1: &str, r2: &str, c: &str) -> String {
-    let r1_v = match parse_bd(TIMER_555_ASTABLE, r1, "r1") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let r2_v = match parse_bd(TIMER_555_ASTABLE, r2, "r2") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let c_v = match parse_bd(TIMER_555_ASTABLE, c, "c") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    if r1_v.is_zero() || r1_v.is_negative() {
-        return error_with_detail(
-            TIMER_555_ASTABLE,
-            ErrorCode::InvalidInput,
-            "r1 must be positive",
-            &format!("r1={r1}"),
-        );
-    }
-    if r2_v.is_zero() || r2_v.is_negative() {
-        return error_with_detail(
-            TIMER_555_ASTABLE,
-            ErrorCode::InvalidInput,
-            "r2 must be positive",
-            &format!("r2={r2}"),
-        );
-    }
-    if c_v.is_zero() || c_v.is_negative() {
-        return error_with_detail(
-            TIMER_555_ASTABLE,
-            ErrorCode::InvalidInput,
-            "c must be positive",
-            &format!("c={c}"),
-        );
-    }
+///
+struct TimerAstableInputs {
+    r1: BigDecimal,
+    r2: BigDecimal,
+    c: BigDecimal,
+}
+
+fn parse_timer_astable(r1: &str, r2: &str, c: &str) -> Result<TimerAstableInputs, String> {
+    let r1_v = parse_bd(TIMER_555_ASTABLE, r1, "r1")?;
+    let r2_v = parse_bd(TIMER_555_ASTABLE, r2, "r2")?;
+    let c_v = parse_bd(TIMER_555_ASTABLE, c, "c")?;
+    positive_bd(TIMER_555_ASTABLE, &r1_v, "r1")?;
+    positive_bd(TIMER_555_ASTABLE, &r2_v, "r2")?;
+    positive_bd(TIMER_555_ASTABLE, &c_v, "c")?;
+    Ok(TimerAstableInputs {
+        r1: r1_v,
+        r2: r2_v,
+        c: c_v,
+    })
+}
+
+struct TimerAstableTiming {
+    freq: BigDecimal,
+    period: BigDecimal,
+    duty: BigDecimal,
+    high_time: BigDecimal,
+    low_time: BigDecimal,
+}
+
+fn compute_timer_astable(inputs: &TimerAstableInputs) -> Result<TimerAstableTiming, String> {
     let two = BigDecimal::from(2);
-    let r1_plus_2r2 = add_ctx(&r1_v, &mul_ctx(&r2_v, &two));
-    let denominator = mul_ctx(&r1_plus_2r2, &c_v);
+    let r1_plus_2r2 = add_ctx(&inputs.r1, &mul_ctx(&inputs.r2, &two));
+    let denominator = mul_ctx(&r1_plus_2r2, &inputs.c);
     if denominator.is_zero() {
-        return error(
+        return Err(error(
             TIMER_555_ASTABLE,
             ErrorCode::DivisionByZero,
             "(R1 + 2·R2)·C must not be zero",
-        );
+        ));
     }
     let freq = div_scaled(&LN2_RECIPROCAL, &denominator);
     if freq.is_zero() {
-        return error(
+        return Err(error(
             TIMER_555_ASTABLE,
             ErrorCode::DivisionByZero,
             "frequency must not be zero",
-        );
+        ));
     }
     let period = div_scaled(&BigDecimal::from(1), &freq);
-    let r1_plus_r2 = add_ctx(&r1_v, &r2_v);
-    let duty = mul_ctx(
-        &div_scaled(&r1_plus_r2, &r1_plus_2r2),
-        &BigDecimal::from(100),
-    );
+    let r_sum = add_ctx(&inputs.r1, &inputs.r2);
+    let duty = mul_ctx(&div_scaled(&r_sum, &r1_plus_2r2), &BigDecimal::from(100));
     let ln2_literal = BigDecimal::from_str("0.69314718055994530941723212145817656808")
         .expect("valid ln(2) literal");
-    let high_time = mul_ctx(&mul_ctx(&ln2_literal, &r1_plus_r2), &c_v);
-    let low_time = mul_ctx(&mul_ctx(&ln2_literal, &r2_v), &c_v);
+    let high_time = mul_ctx(&mul_ctx(&ln2_literal, &r_sum), &inputs.c);
+    let low_time = mul_ctx(&mul_ctx(&ln2_literal, &inputs.r2), &inputs.c);
+    Ok(TimerAstableTiming {
+        freq,
+        period,
+        duty,
+        high_time,
+        low_time,
+    })
+}
+
+fn positive_bd(tool: &str, value: &BigDecimal, name: &str) -> Result<(), String> {
+    if value.is_zero() || value.is_negative() {
+        Err(error_with_detail(
+            tool,
+            ErrorCode::InvalidInput,
+            &format!("{name} must be positive"),
+            &format!("{name}={}", strip_plain(value)),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// # Panics
+///
+/// Panics only if the hard-coded `ln(2)` literal fails to parse — which is
+/// impossible for the compile-time constant used here.
+#[must_use]
+pub fn timer_555_astable(r1: &str, r2: &str, c: &str) -> String {
+    let inputs = match parse_timer_astable(r1, r2, c) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let timing = match compute_timer_astable(&inputs) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
     Response::ok(TIMER_555_ASTABLE)
-        .field("FREQUENCY", strip_plain(&freq))
-        .field("PERIOD", strip_plain(&period))
-        .field("DUTY_CYCLE", strip_plain(&duty))
-        .field("HIGH_TIME", strip_plain(&high_time))
-        .field("LOW_TIME", strip_plain(&low_time))
+        .field("FREQUENCY", strip_plain(&timing.freq))
+        .field("PERIOD", strip_plain(&timing.period))
+        .field("DUTY_CYCLE", strip_plain(&timing.duty))
+        .field("HIGH_TIME", strip_plain(&timing.high_time))
+        .field("LOW_TIME", strip_plain(&timing.low_time))
         .build()
 }
 
 /// 555-timer monostable pulse width: 1.1 * R * C.
+///
+/// # Panics
+///
+/// Panics only if the hard-coded `"1.1"` literal fails to parse as a
+/// `BigDecimal` — which is impossible for this compile-time constant.
+#[must_use]
 pub fn timer_555_monostable(r: &str, c: &str) -> String {
     let r_v = match parse_bd(TIMER_555_MONOSTABLE, r, "r") {
         Ok(v) => v,
@@ -454,6 +496,7 @@ pub fn timer_555_monostable(r: &str, c: &str) -> String {
 }
 
 /// Convert between frequency and period (reciprocal).
+#[must_use] 
 pub fn frequency_period(value: &str, mode: &str) -> String {
     match mode {
         "freqToPeriod" | "periodToFreq" => {}
@@ -482,6 +525,7 @@ pub fn frequency_period(value: &str, mode: &str) -> String {
 }
 
 /// Nyquist minimum sampling rate: 2 × bandwidth.
+#[must_use] 
 pub fn nyquist_rate(bandwidth_hz: &str) -> String {
     let bw = match parse_bd(NYQUIST_RATE, bandwidth_hz, "bandwidth") {
         Ok(v) => v,

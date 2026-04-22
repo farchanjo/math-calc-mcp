@@ -8,7 +8,7 @@
 use rmcp::{
     ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::*,
+    model::{ServerInfo, ServerCapabilities, ProtocolVersion, Implementation},
     schemars, tool, tool_handler, tool_router,
 };
 
@@ -676,8 +676,13 @@ pub struct NyquistParams {
 //  Tool router — one method per MCP tool.
 // --------------------------------------------------------------------------- //
 
+// Handlers delegate straight to module-level functions and carry no shared
+// state, so they are written as associated functions — rmcp supports both
+// shapes via `SyncAdapter` (no receiver) and `SyncMethodAdapter` (`&self`).
+// Using the receiver-less shape keeps clippy happy without `#[allow]`.
 #[tool_router]
 impl MathCalcServer {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             tool_router: Self::tool_router(),
@@ -687,78 +692,78 @@ impl MathCalcServer {
     // ---- Basic ---------------------------------------------------------- //
 
     #[tool(description = "Add two numbers. Returns exact arbitrary-precision result.")]
-    fn add(&self, Parameters(p): Parameters<BinaryDecimalParams>) -> String {
+    fn add(Parameters(p): Parameters<BinaryDecimalParams>) -> String {
         basic::add(&p.first, &p.second)
     }
 
     #[tool(description = "Subtract second from first. Returns exact arbitrary-precision result.")]
-    fn subtract(&self, Parameters(p): Parameters<BinaryDecimalParams>) -> String {
+    fn subtract(Parameters(p): Parameters<BinaryDecimalParams>) -> String {
         basic::subtract(&p.first, &p.second)
     }
 
     #[tool(description = "Multiply two numbers. Returns exact arbitrary-precision result.")]
-    fn multiply(&self, Parameters(p): Parameters<BinaryDecimalParams>) -> String {
+    fn multiply(Parameters(p): Parameters<BinaryDecimalParams>) -> String {
         basic::multiply(&p.first, &p.second)
     }
 
     #[tool(description = "Divide first by second. 20-digit precision, HALF_UP rounding.")]
-    fn divide(&self, Parameters(p): Parameters<BinaryDecimalParams>) -> String {
+    fn divide(Parameters(p): Parameters<BinaryDecimalParams>) -> String {
         basic::divide(&p.first, &p.second)
     }
 
     #[tool(description = "Raise base to a non-negative integer exponent. Exact result.")]
-    fn power(&self, Parameters(p): Parameters<PowerParams>) -> String {
+    fn power(Parameters(p): Parameters<PowerParams>) -> String {
         basic::power(&p.base, &p.exponent)
     }
 
     #[tool(description = "Remainder of first divided by second. Exact result.")]
-    fn modulo(&self, Parameters(p): Parameters<BinaryDecimalParams>) -> String {
+    fn modulo(Parameters(p): Parameters<BinaryDecimalParams>) -> String {
         basic::modulo(&p.first, &p.second)
     }
 
     #[tool(description = "Absolute value of a decimal. Exact result.")]
-    fn abs(&self, Parameters(p): Parameters<UnaryDecimalParams>) -> String {
+    fn abs(Parameters(p): Parameters<UnaryDecimalParams>) -> String {
         basic::abs(&p.value)
     }
 
     // ---- Scientific ----------------------------------------------------- //
 
     #[tool(description = "Square root of a non-negative number.")]
-    fn sqrt(&self, Parameters(p): Parameters<UnaryDoubleParams>) -> String {
+    fn sqrt(Parameters(p): Parameters<UnaryDoubleParams>) -> String {
         scientific::sqrt(p.number)
     }
 
     #[tool(description = "Natural logarithm (ln) of a positive number.")]
-    fn log(&self, Parameters(p): Parameters<UnaryDoubleParams>) -> String {
+    fn log(Parameters(p): Parameters<UnaryDoubleParams>) -> String {
         scientific::log(p.number)
     }
 
     #[tool(description = "Base-10 logarithm of a positive number.")]
-    fn log10(&self, Parameters(p): Parameters<UnaryDoubleParams>) -> String {
+    fn log10(Parameters(p): Parameters<UnaryDoubleParams>) -> String {
         scientific::log10(p.number)
     }
 
     #[tool(description = "Factorial (n!) for integers in the range 0..=20.")]
-    fn factorial(&self, Parameters(p): Parameters<FactorialParams>) -> String {
+    fn factorial(Parameters(p): Parameters<FactorialParams>) -> String {
         scientific::factorial(p.num)
     }
 
     #[tool(description = "Sine of angle in degrees. Exact at notable angles (0/30/45/60/90/...).")]
-    fn sin(&self, Parameters(p): Parameters<AngleParams>) -> String {
+    fn sin(Parameters(p): Parameters<AngleParams>) -> String {
         scientific::sin(p.degrees)
     }
 
     #[tool(
         description = "Cosine of angle in degrees. Exact at notable angles (0/30/45/60/90/...)."
     )]
-    fn cos(&self, Parameters(p): Parameters<AngleParams>) -> String {
+    fn cos(Parameters(p): Parameters<AngleParams>) -> String {
         scientific::cos(p.degrees)
     }
 
     #[tool(
         description = "Tangent of angle in degrees. Exact at notable angles; error at 90°/270°."
     )]
-    fn tan(&self, Parameters(p): Parameters<AngleParams>) -> String {
+    fn tan(Parameters(p): Parameters<AngleParams>) -> String {
         scientific::tan(p.degrees)
     }
 
@@ -767,7 +772,7 @@ impl MathCalcServer {
     #[tool(
         description = "Evaluate an arithmetic expression. Supports + - * / ^ %, parens, and functions sin/cos/tan/log/log10/sqrt/abs/ceil/floor."
     )]
-    fn evaluate(&self, Parameters(p): Parameters<EvaluateParams>) -> String {
+    fn evaluate(Parameters(p): Parameters<EvaluateParams>) -> String {
         programmable::evaluate(&p.expression)
     }
 
@@ -776,7 +781,6 @@ impl MathCalcServer {
         description = "Evaluate an arithmetic expression with a JSON variable map, e.g. expression='2*x+y', variables='{\"x\":3,\"y\":1}'."
     )]
     fn evaluate_with_variables(
-        &self,
         Parameters(p): Parameters<EvaluateWithVariablesParams>,
     ) -> String {
         programmable::evaluate_with_variables(&p.expression, &p.variables)
@@ -786,7 +790,7 @@ impl MathCalcServer {
         name = "evaluateExact",
         description = "Evaluate an arithmetic expression at 128-bit precision (astro-float). Returns exact decimals (0.1+0.2 = 0.3)."
     )]
-    fn evaluate_exact(&self, Parameters(p): Parameters<EvaluateParams>) -> String {
+    fn evaluate_exact(Parameters(p): Parameters<EvaluateParams>) -> String {
         programmable::evaluate_exact(&p.expression)
     }
 
@@ -795,7 +799,6 @@ impl MathCalcServer {
         description = "Exact evaluator with JSON variable map. Variable values may be numbers or decimal strings; strings preserve >15-digit precision."
     )]
     fn evaluate_exact_with_variables(
-        &self,
         Parameters(p): Parameters<EvaluateWithVariablesParams>,
     ) -> String {
         programmable::evaluate_exact_with_variables(&p.expression, &p.variables)
@@ -807,7 +810,7 @@ impl MathCalcServer {
         name = "sumArray",
         description = "Sum all elements of a comma-separated numeric array (SIMD-accelerated)."
     )]
-    fn sum_array(&self, Parameters(p): Parameters<NumbersArrayParams>) -> String {
+    fn sum_array(Parameters(p): Parameters<NumbersArrayParams>) -> String {
         vector::sum_array(&p.numbers)
     }
 
@@ -815,7 +818,7 @@ impl MathCalcServer {
         name = "dotProduct",
         description = "Dot product of two comma-separated numeric arrays of equal length."
     )]
-    fn dot_product(&self, Parameters(p): Parameters<TwoNumberArraysParams>) -> String {
+    fn dot_product(Parameters(p): Parameters<TwoNumberArraysParams>) -> String {
         vector::dot_product(&p.first, &p.second)
     }
 
@@ -823,7 +826,7 @@ impl MathCalcServer {
         name = "scaleArray",
         description = "Multiply every element of a CSV numeric array by a scalar; returns CSV."
     )]
-    fn scale_array(&self, Parameters(p): Parameters<ScaleArrayParams>) -> String {
+    fn scale_array(Parameters(p): Parameters<ScaleArrayParams>) -> String {
         vector::scale_array(&p.numbers, &p.scalar)
     }
 
@@ -831,7 +834,7 @@ impl MathCalcServer {
         name = "magnitudeArray",
         description = "Euclidean magnitude (L2 norm) of a CSV numeric vector."
     )]
-    fn magnitude_array(&self, Parameters(p): Parameters<NumbersArrayParams>) -> String {
+    fn magnitude_array(Parameters(p): Parameters<NumbersArrayParams>) -> String {
         vector::magnitude_array(&p.numbers)
     }
 
@@ -841,7 +844,7 @@ impl MathCalcServer {
         name = "compoundInterest",
         description = "Future value with compound interest: A = P*(1 + r/n)^(n*t). Rate is a percent (e.g. 5 = 5%)."
     )]
-    fn compound_interest(&self, Parameters(p): Parameters<CompoundInterestParams>) -> String {
+    fn compound_interest(Parameters(p): Parameters<CompoundInterestParams>) -> String {
         financial::compound_interest(&p.principal, &p.annual_rate, &p.years, p.compounds_per_year)
     }
 
@@ -849,7 +852,7 @@ impl MathCalcServer {
         name = "loanPayment",
         description = "Fixed monthly payment for an amortizing loan given principal, annual rate (%) and years."
     )]
-    fn loan_payment(&self, Parameters(p): Parameters<LoanPaymentParams>) -> String {
+    fn loan_payment(Parameters(p): Parameters<LoanPaymentParams>) -> String {
         financial::loan_payment(&p.principal, &p.annual_rate, &p.years)
     }
 
@@ -857,7 +860,7 @@ impl MathCalcServer {
         name = "presentValue",
         description = "Present value of a future amount: PV = FV / (1 + r)^t. Rate is a percent."
     )]
-    fn present_value(&self, Parameters(p): Parameters<PresentValueParams>) -> String {
+    fn present_value(Parameters(p): Parameters<PresentValueParams>) -> String {
         financial::present_value(&p.future_value, &p.annual_rate, &p.years)
     }
 
@@ -865,7 +868,7 @@ impl MathCalcServer {
         name = "futureValueAnnuity",
         description = "Future value of an ordinary annuity: FV = PMT * ((1+r)^n - 1) / r."
     )]
-    fn future_value_annuity(&self, Parameters(p): Parameters<FutureValueAnnuityParams>) -> String {
+    fn future_value_annuity(Parameters(p): Parameters<FutureValueAnnuityParams>) -> String {
         financial::future_value_annuity(&p.payment, &p.annual_rate, &p.years)
     }
 
@@ -873,7 +876,7 @@ impl MathCalcServer {
         name = "returnOnInvestment",
         description = "Return on investment as a percentage: ROI = (gain - cost) / cost * 100."
     )]
-    fn return_on_investment(&self, Parameters(p): Parameters<RoiParams>) -> String {
+    fn return_on_investment(Parameters(p): Parameters<RoiParams>) -> String {
         financial::return_on_investment(&p.gain, &p.cost)
     }
 
@@ -881,7 +884,7 @@ impl MathCalcServer {
         name = "amortizationSchedule",
         description = "Monthly amortization schedule as a JSON array of {month, payment, principal, interest, balance}."
     )]
-    fn amortization_schedule(&self, Parameters(p): Parameters<LoanPaymentParams>) -> String {
+    fn amortization_schedule(Parameters(p): Parameters<LoanPaymentParams>) -> String {
         financial::amortization_schedule(&p.principal, &p.annual_rate, &p.years)
     }
 
@@ -890,7 +893,7 @@ impl MathCalcServer {
     #[tool(
         description = "Numerical derivative (five-point central difference) of an expression at a point."
     )]
-    fn derivative(&self, Parameters(p): Parameters<DerivativeParams>) -> String {
+    fn derivative(Parameters(p): Parameters<DerivativeParams>) -> String {
         calculus::derivative(&p.expression, &p.variable, p.point)
     }
 
@@ -898,7 +901,7 @@ impl MathCalcServer {
         name = "nthDerivative",
         description = "Nth-order numerical derivative of an expression at a point. Order must be in [1, 10]."
     )]
-    fn nth_derivative(&self, Parameters(p): Parameters<NthDerivativeParams>) -> String {
+    fn nth_derivative(Parameters(p): Parameters<NthDerivativeParams>) -> String {
         calculus::nth_derivative(&p.expression, &p.variable, p.point, p.order)
     }
 
@@ -906,7 +909,7 @@ impl MathCalcServer {
         name = "definiteIntegral",
         description = "Definite integral ∫[lower..upper] f(var) dvar via composite Simpson's rule (10 000 intervals)."
     )]
-    fn definite_integral(&self, Parameters(p): Parameters<DefiniteIntegralParams>) -> String {
+    fn definite_integral(Parameters(p): Parameters<DefiniteIntegralParams>) -> String {
         calculus::definite_integral(&p.expression, &p.variable, p.lower, p.upper)
     }
 
@@ -914,7 +917,7 @@ impl MathCalcServer {
         name = "tangentLine",
         description = "Tangent line to f(var) at a point. Returns JSON {slope, yIntercept, equation}."
     )]
-    fn tangent_line(&self, Parameters(p): Parameters<DerivativeParams>) -> String {
+    fn tangent_line(Parameters(p): Parameters<DerivativeParams>) -> String {
         calculus::tangent_line(&p.expression, &p.variable, p.point)
     }
 
@@ -923,7 +926,7 @@ impl MathCalcServer {
     #[tool(
         description = "Convert a value between units within an explicit category (e.g. LENGTH, MASS, TEMPERATURE)."
     )]
-    fn convert(&self, Parameters(p): Parameters<ConvertParams>) -> String {
+    fn convert(Parameters(p): Parameters<ConvertParams>) -> String {
         unit_converter::convert(&p.value, &p.from_unit, &p.to_unit, &p.category)
     }
 
@@ -931,7 +934,7 @@ impl MathCalcServer {
         name = "convertAutoDetect",
         description = "Convert a value between units, auto-detecting the shared category."
     )]
-    fn convert_auto_detect(&self, Parameters(p): Parameters<ConvertAutoParams>) -> String {
+    fn convert_auto_detect(Parameters(p): Parameters<ConvertAutoParams>) -> String {
         unit_converter::convert_auto_detect(&p.value, &p.from_unit, &p.to_unit)
     }
 
@@ -941,7 +944,7 @@ impl MathCalcServer {
         name = "convertCookingVolume",
         description = "Cooking volume conversion (l/ml/cup/tbsp/tsp/floz/gal). Aliases cup/floz/gal map to US."
     )]
-    fn convert_cooking_volume(&self, Parameters(p): Parameters<CookingConvertParams>) -> String {
+    fn convert_cooking_volume(Parameters(p): Parameters<CookingConvertParams>) -> String {
         cooking::convert_cooking_volume(&p.value, &p.from_unit, &p.to_unit)
     }
 
@@ -949,7 +952,7 @@ impl MathCalcServer {
         name = "convertCookingWeight",
         description = "Cooking weight conversion (kg, g, mg, lb, oz)."
     )]
-    fn convert_cooking_weight(&self, Parameters(p): Parameters<CookingConvertParams>) -> String {
+    fn convert_cooking_weight(Parameters(p): Parameters<CookingConvertParams>) -> String {
         cooking::convert_cooking_weight(&p.value, &p.from_unit, &p.to_unit)
     }
 
@@ -957,7 +960,7 @@ impl MathCalcServer {
         name = "convertOvenTemperature",
         description = "Oven temperature conversion between Celsius (c), Fahrenheit (f), and UK gas mark (gasmark)."
     )]
-    fn convert_oven_temperature(&self, Parameters(p): Parameters<CookingConvertParams>) -> String {
+    fn convert_oven_temperature(Parameters(p): Parameters<CookingConvertParams>) -> String {
         cooking::convert_oven_temperature(&p.value, &p.from_unit, &p.to_unit)
     }
 
@@ -967,7 +970,7 @@ impl MathCalcServer {
         name = "listCategories",
         description = "List every registered measurement category as a JSON array."
     )]
-    fn list_categories(&self) -> String {
+    fn list_categories() -> String {
         measure_reference::list_categories()
     }
 
@@ -975,7 +978,7 @@ impl MathCalcServer {
         name = "listUnits",
         description = "List every unit registered in a category. Returns JSON array of {code, name}."
     )]
-    fn list_units(&self, Parameters(p): Parameters<CategoryParams>) -> String {
+    fn list_units(Parameters(p): Parameters<CategoryParams>) -> String {
         measure_reference::list_units(&p.category)
     }
 
@@ -983,7 +986,7 @@ impl MathCalcServer {
         name = "getConversionFactor",
         description = "Multiplicative factor that maps `fromUnit` to `toUnit` (temperatures use formulas, not a factor)."
     )]
-    fn get_conversion_factor(&self, Parameters(p): Parameters<FromToUnitParams>) -> String {
+    fn get_conversion_factor(Parameters(p): Parameters<FromToUnitParams>) -> String {
         measure_reference::get_conversion_factor(&p.from_unit, &p.to_unit)
     }
 
@@ -991,7 +994,7 @@ impl MathCalcServer {
         name = "explainConversion",
         description = "Human-readable explanation of a unit conversion, e.g. `1 kilometer = 0.621... mile`."
     )]
-    fn explain_conversion(&self, Parameters(p): Parameters<FromToUnitParams>) -> String {
+    fn explain_conversion(Parameters(p): Parameters<FromToUnitParams>) -> String {
         measure_reference::explain_conversion(&p.from_unit, &p.to_unit)
     }
 
@@ -1001,7 +1004,7 @@ impl MathCalcServer {
         name = "convertTimezone",
         description = "Convert a datetime between IANA timezones. Returns ISO-zoned form with [Zone/ID] suffix."
     )]
-    fn convert_timezone(&self, Parameters(p): Parameters<ConvertTimezoneParams>) -> String {
+    fn convert_timezone(Parameters(p): Parameters<ConvertTimezoneParams>) -> String {
         datetime::convert_timezone(&p.datetime, &p.from_timezone, &p.to_timezone)
     }
 
@@ -1009,7 +1012,7 @@ impl MathCalcServer {
         name = "formatDateTime",
         description = "Reformat a datetime. Format keywords: iso, iso-offset, iso-local, epoch, epochmillis, rfc1123, or strftime."
     )]
-    fn format_datetime(&self, Parameters(p): Parameters<FormatDateTimeParams>) -> String {
+    fn format_datetime(Parameters(p): Parameters<FormatDateTimeParams>) -> String {
         datetime::format_datetime(&p.datetime, &p.input_format, &p.output_format, &p.timezone)
     }
 
@@ -1017,7 +1020,7 @@ impl MathCalcServer {
         name = "currentDateTime",
         description = "Current datetime in the given IANA timezone using a format keyword or strftime pattern."
     )]
-    fn current_datetime(&self, Parameters(p): Parameters<CurrentDateTimeParams>) -> String {
+    fn current_datetime(Parameters(p): Parameters<CurrentDateTimeParams>) -> String {
         datetime::current_datetime(&p.timezone, &p.format)
     }
 
@@ -1025,7 +1028,7 @@ impl MathCalcServer {
         name = "listTimezones",
         description = "JSON array of IANA timezone IDs, filtered by region prefix (e.g. `Europe`, or `all`)."
     )]
-    fn list_timezones(&self, Parameters(p): Parameters<ListTimezonesParams>) -> String {
+    fn list_timezones(Parameters(p): Parameters<ListTimezonesParams>) -> String {
         datetime::list_timezones(&p.region)
     }
 
@@ -1033,7 +1036,7 @@ impl MathCalcServer {
         name = "dateTimeDifference",
         description = "Positive difference between two datetimes in a given zone. Returns JSON with years/months/days/hours/minutes/seconds/totalSeconds."
     )]
-    fn datetime_difference(&self, Parameters(p): Parameters<DateTimeDifferenceParams>) -> String {
+    fn datetime_difference(Parameters(p): Parameters<DateTimeDifferenceParams>) -> String {
         datetime::datetime_difference(&p.datetime1, &p.datetime2, &p.timezone)
     }
 
@@ -1043,7 +1046,7 @@ impl MathCalcServer {
         name = "calculateWithTape",
         description = "Tape calculator: runs a JSON array of {op,value} entries. Ops: + - * / = C T. Returns the printed tape."
     )]
-    fn calculate_with_tape(&self, Parameters(p): Parameters<TapeParams>) -> String {
+    fn calculate_with_tape(Parameters(p): Parameters<TapeParams>) -> String {
         printing::calculate_with_tape(&p.operations)
     }
 
@@ -1053,7 +1056,7 @@ impl MathCalcServer {
         name = "plotFunction",
         description = "Sample f(var) over [min, max] with `steps` intervals. Returns JSON array of {x, y}."
     )]
-    fn plot_function(&self, Parameters(p): Parameters<PlotFunctionParams>) -> String {
+    fn plot_function(Parameters(p): Parameters<PlotFunctionParams>) -> String {
         graphing::plot_function(&p.expression, &p.variable, p.min, p.max, p.steps)
     }
 
@@ -1061,7 +1064,7 @@ impl MathCalcServer {
         name = "solveEquation",
         description = "Solve f(var)=0 near an initial guess using Newton-Raphson. Returns the root or an error."
     )]
-    fn solve_equation(&self, Parameters(p): Parameters<SolveEquationParams>) -> String {
+    fn solve_equation(Parameters(p): Parameters<SolveEquationParams>) -> String {
         graphing::solve_equation(&p.expression, &p.variable, p.initial_guess)
     }
 
@@ -1069,7 +1072,7 @@ impl MathCalcServer {
         name = "findRoots",
         description = "Find all roots of f(var) in [min, max] via scan + bisection. Returns JSON array of roots."
     )]
-    fn find_roots(&self, Parameters(p): Parameters<FindRootsParams>) -> String {
+    fn find_roots(Parameters(p): Parameters<FindRootsParams>) -> String {
         graphing::find_roots(&p.expression, &p.variable, p.min, p.max)
     }
 
@@ -1079,7 +1082,7 @@ impl MathCalcServer {
         name = "subnetCalculator",
         description = "Subnet details (network, broadcast, mask, wildcard, first/last host, usable hosts, IP class) for IPv4 or IPv6."
     )]
-    fn subnet_calculator(&self, Parameters(p): Parameters<SubnetParams>) -> String {
+    fn subnet_calculator(Parameters(p): Parameters<SubnetParams>) -> String {
         network::subnet_calculator(&p.address, p.cidr)
     }
 
@@ -1087,7 +1090,7 @@ impl MathCalcServer {
         name = "ipToBinary",
         description = "Convert an IPv4/IPv6 address to its binary representation."
     )]
-    fn ip_to_binary(&self, Parameters(p): Parameters<AddressParams>) -> String {
+    fn ip_to_binary(Parameters(p): Parameters<AddressParams>) -> String {
         network::ip_to_binary(&p.address)
     }
 
@@ -1095,7 +1098,7 @@ impl MathCalcServer {
         name = "binaryToIp",
         description = "Convert a binary IPv4/IPv6 representation back to decimal notation."
     )]
-    fn binary_to_ip(&self, Parameters(p): Parameters<BinaryParams>) -> String {
+    fn binary_to_ip(Parameters(p): Parameters<BinaryParams>) -> String {
         network::binary_to_ip(&p.binary)
     }
 
@@ -1103,7 +1106,7 @@ impl MathCalcServer {
         name = "ipToDecimal",
         description = "Convert an IP address to its unsigned decimal integer."
     )]
-    fn ip_to_decimal(&self, Parameters(p): Parameters<AddressParams>) -> String {
+    fn ip_to_decimal(Parameters(p): Parameters<AddressParams>) -> String {
         network::ip_to_decimal(&p.address)
     }
 
@@ -1111,7 +1114,7 @@ impl MathCalcServer {
         name = "decimalToIp",
         description = "Convert an unsigned decimal integer to an IP address (version must be 4 or 6)."
     )]
-    fn decimal_to_ip(&self, Parameters(p): Parameters<DecimalToIpParams>) -> String {
+    fn decimal_to_ip(Parameters(p): Parameters<DecimalToIpParams>) -> String {
         network::decimal_to_ip(&p.decimal, p.version)
     }
 
@@ -1119,7 +1122,7 @@ impl MathCalcServer {
         name = "ipInSubnet",
         description = "Test whether an IP address belongs to a given subnet. Returns `true` or `false`."
     )]
-    fn ip_in_subnet(&self, Parameters(p): Parameters<IpInSubnetParams>) -> String {
+    fn ip_in_subnet(Parameters(p): Parameters<IpInSubnetParams>) -> String {
         network::ip_in_subnet(&p.address, &p.network, p.cidr)
     }
 
@@ -1127,7 +1130,7 @@ impl MathCalcServer {
         name = "vlsmSubnets",
         description = "VLSM subnet allocation. `hostCounts` is a JSON array of required host counts; returns JSON array of allocated subnets."
     )]
-    fn vlsm_subnets(&self, Parameters(p): Parameters<VlsmParams>) -> String {
+    fn vlsm_subnets(Parameters(p): Parameters<VlsmParams>) -> String {
         network::vlsm_subnets(&p.network_cidr, &p.host_counts)
     }
 
@@ -1135,7 +1138,7 @@ impl MathCalcServer {
         name = "summarizeSubnets",
         description = "Summarize (supernet) a JSON array of IPv4 CIDR blocks into a single CIDR."
     )]
-    fn summarize_subnets(&self, Parameters(p): Parameters<SummarizeParams>) -> String {
+    fn summarize_subnets(Parameters(p): Parameters<SummarizeParams>) -> String {
         network::summarize_subnets(&p.subnets)
     }
 
@@ -1143,7 +1146,7 @@ impl MathCalcServer {
         name = "expandIpv6",
         description = "Expand a compressed IPv6 address to its full 8-group form."
     )]
-    fn expand_ipv6(&self, Parameters(p): Parameters<AddressParams>) -> String {
+    fn expand_ipv6(Parameters(p): Parameters<AddressParams>) -> String {
         network::expand_ipv6(&p.address)
     }
 
@@ -1151,7 +1154,7 @@ impl MathCalcServer {
         name = "compressIpv6",
         description = "Compress an IPv6 address to its shortest canonical form using `::`."
     )]
-    fn compress_ipv6(&self, Parameters(p): Parameters<AddressParams>) -> String {
+    fn compress_ipv6(Parameters(p): Parameters<AddressParams>) -> String {
         network::compress_ipv6(&p.address)
     }
 
@@ -1159,7 +1162,7 @@ impl MathCalcServer {
         name = "transferTime",
         description = "Estimate file transfer time. Returns JSON with seconds, minutes, hours."
     )]
-    fn transfer_time(&self, Parameters(p): Parameters<TransferTimeParams>) -> String {
+    fn transfer_time(Parameters(p): Parameters<TransferTimeParams>) -> String {
         network::transfer_time(
             &p.file_size,
             &p.file_size_unit,
@@ -1171,7 +1174,7 @@ impl MathCalcServer {
     #[tool(
         description = "Data throughput given data size, elapsed time, and output rate unit (e.g. mbps)."
     )]
-    fn throughput(&self, Parameters(p): Parameters<ThroughputParams>) -> String {
+    fn throughput(Parameters(p): Parameters<ThroughputParams>) -> String {
         network::throughput(
             &p.data_size,
             &p.data_size_unit,
@@ -1185,7 +1188,7 @@ impl MathCalcServer {
         name = "tcpThroughput",
         description = "Effective TCP throughput via bandwidth-delay product. Returns Mbps."
     )]
-    fn tcp_throughput(&self, Parameters(p): Parameters<TcpThroughputParams>) -> String {
+    fn tcp_throughput(Parameters(p): Parameters<TcpThroughputParams>) -> String {
         network::tcp_throughput(&p.bandwidth_mbps, &p.rtt_ms, &p.window_size_kb)
     }
 
@@ -1195,7 +1198,7 @@ impl MathCalcServer {
         name = "ohmsLaw",
         description = "Ohm's Law: provide exactly two of V/I/R/P (non-empty strings) and compute the remaining two."
     )]
-    fn ohms_law(&self, Parameters(p): Parameters<OhmsLawParams>) -> String {
+    fn ohms_law(Parameters(p): Parameters<OhmsLawParams>) -> String {
         analog_electronics::ohms_law(&p.voltage, &p.current, &p.resistance, &p.power)
     }
 
@@ -1203,7 +1206,7 @@ impl MathCalcServer {
         name = "resistorCombination",
         description = "Resistor combination: series sums, parallel reciprocal-sums. Values CSV in ohms."
     )]
-    fn resistor_combination(&self, Parameters(p): Parameters<CombinationParams>) -> String {
+    fn resistor_combination(Parameters(p): Parameters<CombinationParams>) -> String {
         analog_electronics::resistor_combination(&p.values, &p.mode)
     }
 
@@ -1211,7 +1214,7 @@ impl MathCalcServer {
         name = "capacitorCombination",
         description = "Capacitor combination: series reciprocal-sums, parallel sums. Values CSV in farads."
     )]
-    fn capacitor_combination(&self, Parameters(p): Parameters<CombinationParams>) -> String {
+    fn capacitor_combination(Parameters(p): Parameters<CombinationParams>) -> String {
         analog_electronics::capacitor_combination(&p.values, &p.mode)
     }
 
@@ -1219,7 +1222,7 @@ impl MathCalcServer {
         name = "inductorCombination",
         description = "Inductor combination: series sums, parallel reciprocal-sums. Values CSV in henries."
     )]
-    fn inductor_combination(&self, Parameters(p): Parameters<CombinationParams>) -> String {
+    fn inductor_combination(Parameters(p): Parameters<CombinationParams>) -> String {
         analog_electronics::inductor_combination(&p.values, &p.mode)
     }
 
@@ -1227,7 +1230,7 @@ impl MathCalcServer {
         name = "voltageDivider",
         description = "Voltage divider: Vout = Vin * R2 / (R1 + R2)."
     )]
-    fn voltage_divider(&self, Parameters(p): Parameters<VoltageDividerParams>) -> String {
+    fn voltage_divider(Parameters(p): Parameters<VoltageDividerParams>) -> String {
         analog_electronics::voltage_divider(&p.vin, &p.r1, &p.r2)
     }
 
@@ -1235,7 +1238,7 @@ impl MathCalcServer {
         name = "currentDivider",
         description = "Current divider across two parallel resistors. Returns JSON {i1, i2}."
     )]
-    fn current_divider(&self, Parameters(p): Parameters<CurrentDividerParams>) -> String {
+    fn current_divider(Parameters(p): Parameters<CurrentDividerParams>) -> String {
         analog_electronics::current_divider(&p.total_current, &p.r1, &p.r2)
     }
 
@@ -1243,7 +1246,7 @@ impl MathCalcServer {
         name = "rcTimeConstant",
         description = "RC time constant τ=RC and cutoff frequency fc=1/(2π·RC). Returns JSON."
     )]
-    fn rc_time_constant(&self, Parameters(p): Parameters<RcTimeParams>) -> String {
+    fn rc_time_constant(Parameters(p): Parameters<RcTimeParams>) -> String {
         analog_electronics::rc_time_constant(&p.resistance, &p.capacitance)
     }
 
@@ -1251,7 +1254,7 @@ impl MathCalcServer {
         name = "rlTimeConstant",
         description = "RL time constant τ=L/R and cutoff frequency fc=R/(2π·L). Returns JSON."
     )]
-    fn rl_time_constant(&self, Parameters(p): Parameters<RlTimeParams>) -> String {
+    fn rl_time_constant(Parameters(p): Parameters<RlTimeParams>) -> String {
         analog_electronics::rl_time_constant(&p.resistance, &p.inductance)
     }
 
@@ -1259,14 +1262,14 @@ impl MathCalcServer {
         name = "rlcResonance",
         description = "RLC resonance: resonant frequency, Q factor, bandwidth. Returns JSON."
     )]
-    fn rlc_resonance(&self, Parameters(p): Parameters<RlcParams>) -> String {
+    fn rlc_resonance(Parameters(p): Parameters<RlcParams>) -> String {
         analog_electronics::rlc_resonance(&p.r, &p.l, &p.c)
     }
 
     #[tool(
         description = "Series RLC impedance magnitude and phase (degrees) at a given frequency. Returns JSON."
     )]
-    fn impedance(&self, Parameters(p): Parameters<ImpedanceParams>) -> String {
+    fn impedance(Parameters(p): Parameters<ImpedanceParams>) -> String {
         analog_electronics::impedance(&p.r, &p.l, &p.c, &p.frequency)
     }
 
@@ -1274,7 +1277,7 @@ impl MathCalcServer {
         name = "decibelConvert",
         description = "Decibel conversion. Mode: powerToDb | voltageToDb | dbToPower | dbToVoltage."
     )]
-    fn decibel_convert(&self, Parameters(p): Parameters<DecibelParams>) -> String {
+    fn decibel_convert(Parameters(p): Parameters<DecibelParams>) -> String {
         analog_electronics::decibel_convert(&p.value, &p.mode)
     }
 
@@ -1282,7 +1285,7 @@ impl MathCalcServer {
         name = "filterCutoff",
         description = "RC filter cutoff frequency fc=1/(2π·RC). Filter type: lowpass or highpass."
     )]
-    fn filter_cutoff(&self, Parameters(p): Parameters<FilterCutoffParams>) -> String {
+    fn filter_cutoff(Parameters(p): Parameters<FilterCutoffParams>) -> String {
         analog_electronics::filter_cutoff(&p.resistance, &p.reactive, &p.filter_type)
     }
 
@@ -1290,7 +1293,7 @@ impl MathCalcServer {
         name = "ledResistor",
         description = "LED current-limiting resistor: R = (Vs - Vf) / If."
     )]
-    fn led_resistor(&self, Parameters(p): Parameters<LedResistorParams>) -> String {
+    fn led_resistor(Parameters(p): Parameters<LedResistorParams>) -> String {
         analog_electronics::led_resistor(&p.vs, &p.vf, &p.i_f)
     }
 
@@ -1298,7 +1301,7 @@ impl MathCalcServer {
         name = "wheatstoneBridge",
         description = "Wheatstone bridge balance resistor: R4 = R3·R2 / R1."
     )]
-    fn wheatstone_bridge(&self, Parameters(p): Parameters<WheatstoneParams>) -> String {
+    fn wheatstone_bridge(Parameters(p): Parameters<WheatstoneParams>) -> String {
         analog_electronics::wheatstone_bridge(&p.r1, &p.r2, &p.r3)
     }
 
@@ -1308,7 +1311,7 @@ impl MathCalcServer {
         name = "convertBase",
         description = "Convert an integer between any two bases in 2..=36. Output is uppercase."
     )]
-    fn convert_base(&self, Parameters(p): Parameters<ConvertBaseParams>) -> String {
+    fn convert_base(Parameters(p): Parameters<ConvertBaseParams>) -> String {
         digital_electronics::convert_base(&p.value, p.from_base, p.to_base)
     }
 
@@ -1316,7 +1319,7 @@ impl MathCalcServer {
         name = "twosComplement",
         description = "Two's-complement encode (`toTwos`) or decode (`fromTwos`). Bit width 1..=64."
     )]
-    fn twos_complement(&self, Parameters(p): Parameters<TwosComplementParams>) -> String {
+    fn twos_complement(Parameters(p): Parameters<TwosComplementParams>) -> String {
         digital_electronics::twos_complement(&p.value, p.bits, &p.direction)
     }
 
@@ -1324,7 +1327,7 @@ impl MathCalcServer {
         name = "grayCode",
         description = "Gray-code encode (`toGray`) or decode (`fromGray`) of a binary string."
     )]
-    fn gray_code(&self, Parameters(p): Parameters<GrayCodeParams>) -> String {
+    fn gray_code(Parameters(p): Parameters<GrayCodeParams>) -> String {
         digital_electronics::gray_code(&p.value, &p.direction)
     }
 
@@ -1332,7 +1335,7 @@ impl MathCalcServer {
         name = "bitwiseOp",
         description = "Bitwise op: AND, OR, XOR, NOT, SHL, SHR. Returns JSON {decimal, binary}."
     )]
-    fn bitwise_op(&self, Parameters(p): Parameters<BitwiseParams>) -> String {
+    fn bitwise_op(Parameters(p): Parameters<BitwiseParams>) -> String {
         digital_electronics::bitwise_op(&p.a, &p.b, &p.operation)
     }
 
@@ -1340,7 +1343,7 @@ impl MathCalcServer {
         name = "adcResolution",
         description = "ADC resolution: lsb = Vref / 2^bits, stepCount = 2^bits - 1. Returns JSON."
     )]
-    fn adc_resolution(&self, Parameters(p): Parameters<AdcParams>) -> String {
+    fn adc_resolution(Parameters(p): Parameters<AdcParams>) -> String {
         digital_electronics::adc_resolution(p.bits, &p.vref)
     }
 
@@ -1348,7 +1351,7 @@ impl MathCalcServer {
         name = "dacOutput",
         description = "DAC output voltage: Vout = Vref * code / 2^bits."
     )]
-    fn dac_output(&self, Parameters(p): Parameters<DacParams>) -> String {
+    fn dac_output(Parameters(p): Parameters<DacParams>) -> String {
         digital_electronics::dac_output(p.bits, &p.vref, p.code)
     }
 
@@ -1356,7 +1359,7 @@ impl MathCalcServer {
         name = "timer555Astable",
         description = "555-timer astable: frequency, dutyCycle (%), period. Returns JSON."
     )]
-    fn timer_555_astable(&self, Parameters(p): Parameters<Timer555AstableParams>) -> String {
+    fn timer_555_astable(Parameters(p): Parameters<Timer555AstableParams>) -> String {
         digital_electronics::timer_555_astable(&p.r1, &p.r2, &p.c)
     }
 
@@ -1364,7 +1367,7 @@ impl MathCalcServer {
         name = "timer555Monostable",
         description = "555-timer monostable pulse width: 1.1·R·C. Returns JSON {pulseWidth}."
     )]
-    fn timer_555_monostable(&self, Parameters(p): Parameters<Timer555MonostableParams>) -> String {
+    fn timer_555_monostable(Parameters(p): Parameters<Timer555MonostableParams>) -> String {
         digital_electronics::timer_555_monostable(&p.r, &p.c)
     }
 
@@ -1372,7 +1375,7 @@ impl MathCalcServer {
         name = "frequencyPeriod",
         description = "Convert between frequency and period (reciprocal). Mode: freqToPeriod or periodToFreq."
     )]
-    fn frequency_period(&self, Parameters(p): Parameters<FreqPeriodParams>) -> String {
+    fn frequency_period(Parameters(p): Parameters<FreqPeriodParams>) -> String {
         digital_electronics::frequency_period(&p.value, &p.mode)
     }
 
@@ -1380,7 +1383,7 @@ impl MathCalcServer {
         name = "nyquistRate",
         description = "Nyquist minimum sampling rate: 2 × bandwidth. Returns JSON {minSampleRate, bandwidth}."
     )]
-    fn nyquist_rate(&self, Parameters(p): Parameters<NyquistParams>) -> String {
+    fn nyquist_rate(Parameters(p): Parameters<NyquistParams>) -> String {
         digital_electronics::nyquist_rate(&p.bandwidth_hz)
     }
 }
@@ -1388,11 +1391,16 @@ impl MathCalcServer {
 #[tool_handler]
 impl ServerHandler for MathCalcServer {
     fn get_info(&self) -> ServerInfo {
+        // Pull the live tool count from the registered router so the
+        // instructions never drift from the actual surface when tools are
+        // added or removed. Using `self.tool_router` here also gives this
+        // method a genuine reason to take `&self`.
+        let tool_count = self.tool_router.list_all().len();
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_protocol_version(ProtocolVersion::LATEST)
             .with_server_info(Implementation::from_build_env())
-            .with_instructions(
-                "Pure-Rust math calculator MCP server. 87 tools across 16 categories. \
+            .with_instructions(format!(
+                "Pure-Rust math calculator MCP server. {tool_count} tools across 16 categories. \
                  Response format: `TOOL_NAME: OK | KEY: value | ...` (inline) or block layout with `ROW_N` keys for tabular payloads. \
                  Errors: `TOOL_NAME: ERROR` + `REASON: [CODE] text` + optional `DETAIL: k=v`. \
                  Error codes: DOMAIN_ERROR, OUT_OF_RANGE, DIVISION_BY_ZERO, PARSE_ERROR, INVALID_INPUT, UNKNOWN_VARIABLE, UNKNOWN_FUNCTION, OVERFLOW, NOT_IMPLEMENTED. \
@@ -1412,6 +1420,6 @@ impl ServerHandler for MathCalcServer {
                  Network (subnetCalculator, ipToBinary, binaryToIp, ipToDecimal, decimalToIp, ipInSubnet, vlsmSubnets, summarizeSubnets, expandIpv6, compressIpv6, transferTime, throughput, tcpThroughput); \
                  Analog electronics (ohmsLaw, resistorCombination, capacitorCombination, inductorCombination, voltageDivider, currentDivider, rcTimeConstant, rlTimeConstant, rlcResonance, impedance, decibelConvert, filterCutoff, ledResistor, wheatstoneBridge); \
                  Digital electronics (convertBase, twosComplement, grayCode, bitwiseOp, adcResolution, dacOutput, timer555Astable, timer555Monostable, frequencyPeriod, nyquistRate).",
-            )
+            ))
     }
 }

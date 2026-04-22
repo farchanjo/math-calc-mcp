@@ -13,6 +13,17 @@ readme = "README.md"
 keywords = ["mcp", "calculator", "math", "stdio", "anthropic"]
 categories = ["command-line-utilities", "mathematics", "science"]
 
+# Strict lint profile applied by default to every `cargo build`, `cargo test`,
+# and `cargo clippy` invocation. Treats warnings — including the full pedantic
+# and nursery sets — as errors so drift cannot slip in silently.
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+
 [lib]
 name = "math_calc"
 path = "src/lib.rs"

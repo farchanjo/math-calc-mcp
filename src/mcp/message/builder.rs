@@ -66,7 +66,7 @@ pub struct Response<'a> {
 impl<'a> Response<'a> {
     /// Start an `OK` response for the given tool name.
     #[must_use]
-    pub fn ok(tool: &'a str) -> Self {
+    pub const fn ok(tool: &'a str) -> Self {
         Self {
             tool,
             status: Cow::Borrowed("OK"),
@@ -76,7 +76,7 @@ impl<'a> Response<'a> {
     }
 
     /// Start a response with a custom status code (e.g. `EMPTY`, `NOOP`).
-    /// Keep status tokens SCREAMING_SNAKE_CASE.
+    /// Keep status tokens `SCREAMING_SNAKE_CASE`.
     #[must_use]
     pub fn status(tool: &'a str, status: impl Into<Cow<'a, str>>) -> Self {
         Self {
@@ -87,7 +87,7 @@ impl<'a> Response<'a> {
         }
     }
 
-    /// Append a `KEY: value` field. Keys should be SCREAMING_SNAKE_CASE.
+    /// Append a `KEY: value` field. Keys should be `SCREAMING_SNAKE_CASE`.
     #[must_use]
     pub fn field(
         mut self,

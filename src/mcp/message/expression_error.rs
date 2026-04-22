@@ -1,7 +1,8 @@
-//! Canonical mapping from [`ExpressionError`] to the tool-scoped response
-//! envelope. Every tool that surfaces expression errors (`programmable`,
-//! `calculus`, `graphing`) delegates here so the REASON text and DETAIL shape
-//! stay identical across the API.
+//! Canonical mapping from [`ExpressionError`] to the tool-scoped response envelope.
+//!
+//! Every tool that surfaces expression errors (`programmable`, `calculus`,
+//! `graphing`) delegates here so the REASON text and DETAIL shape stay
+//! identical across the API.
 
 use super::{ErrorCode, error, error_with_detail};
 use crate::engine::expression::ExpressionError;
@@ -61,10 +62,10 @@ pub fn expression_error_envelope(tool: &str, err: &ExpressionError) -> String {
             Some(format!("op={op}")),
         ),
     };
-    match detail {
-        Some(d) => error_with_detail(tool, code, reason, &d),
-        None => error(tool, code, reason),
-    }
+    detail.map_or_else(
+        || error(tool, code, reason),
+        |d| error_with_detail(tool, code, reason, &d),
+    )
 }
 
 #[cfg(test)]

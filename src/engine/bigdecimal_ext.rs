@@ -11,7 +11,7 @@ use bigdecimal::BigDecimal;
 /// DECIMAL128 precision — 34 significant digits — matches `MathContext.DECIMAL128`.
 pub const DECIMAL128_PRECISION: u64 = 34;
 
-/// Scale used for division across financial/electronics tools (20 decimal places, HALF_UP).
+/// Scale used for division across financial/electronics tools (20 decimal places, `HALF_UP`).
 pub const DIVISION_SCALE: i64 = 20;
 
 /// 2π with 40 fractional digits — sufficient for DECIMAL128 multiplications.
@@ -39,11 +39,13 @@ pub static LN2_RECIPROCAL: LazyLock<BigDecimal> = LazyLock::new(|| {
 ///
 /// Matches Java `value.stripTrailingZeros().toPlainString()` except that a pure
 /// integer result is printed without a trailing `.0`.
+#[must_use] 
 pub fn strip_plain(value: &BigDecimal) -> String {
     value.normalized().to_plain_string()
 }
 
 /// True iff the value is exactly zero.
+#[must_use] 
 pub fn is_zero(value: &BigDecimal) -> bool {
     use num_traits::Zero;
     value.is_zero()

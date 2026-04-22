@@ -45,6 +45,7 @@ fn ok_result(tool: &str, value: String) -> String {
 }
 
 /// Sum all elements of a numeric array.
+#[must_use] 
 pub fn sum_array(numbers: &str) -> String {
     let array = match parse_array(TOOL_SUM_ARRAY, "numbers", numbers) {
         Ok(arr) => arr,
@@ -76,6 +77,7 @@ pub fn sum_array(numbers: &str) -> String {
 }
 
 /// Dot product of two arrays of equal length.
+#[must_use] 
 pub fn dot_product(first: &str, second: &str) -> String {
     let array_a = match parse_array(TOOL_DOT_PRODUCT, "first", first) {
         Ok(arr) => arr,
@@ -130,6 +132,7 @@ pub fn dot_product(first: &str, second: &str) -> String {
 }
 
 /// Multiply every element by a scalar, returning the CSV result.
+#[must_use] 
 pub fn scale_array(numbers: &str, scalar: &str) -> String {
     let array = match parse_array(TOOL_SCALE_ARRAY, "numbers", numbers) {
         Ok(arr) => arr,
@@ -143,16 +146,13 @@ pub fn scale_array(numbers: &str, scalar: &str) -> String {
         );
     }
     let trimmed_scalar = scalar.trim();
-    let factor = match trimmed_scalar.parse::<f64>() {
-        Ok(value) => value,
-        Err(_) => {
-            return error_with_detail(
-                TOOL_SCALE_ARRAY,
-                ErrorCode::ParseError,
-                "scalar is not a valid number",
-                &format!("scalar={trimmed_scalar}"),
-            );
-        }
+    let Ok(factor) = trimmed_scalar.parse::<f64>() else {
+        return error_with_detail(
+            TOOL_SCALE_ARRAY,
+            ErrorCode::ParseError,
+            "scalar is not a valid number",
+            &format!("scalar={trimmed_scalar}"),
+        );
     };
 
     let mut result = vec![0.0_f64; array.len()];
@@ -183,6 +183,7 @@ pub fn scale_array(numbers: &str, scalar: &str) -> String {
 }
 
 /// Euclidean norm (magnitude) of a vector: `sqrt(sum(x²))`.
+#[must_use] 
 pub fn magnitude_array(numbers: &str) -> String {
     let array = match parse_array(TOOL_MAGNITUDE_ARRAY, "numbers", numbers) {
         Ok(arr) => arr,

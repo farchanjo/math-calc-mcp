@@ -502,6 +502,31 @@ def test_datetime(r: TestRunner) -> None:
     }), lambda v: envelope_ok(v, "FORMAT_DATETIME")
        and "2024-03-03" in (envelope_field(v, "RESULT") or ""))
 
+    # Regression: output format without any `%` strftime token used to be
+    # echoed as literal text (e.g. outputFormat="invalid_format" returned
+    # RESULT: invalid_format). Must now surface INVALID_INPUT.
+    r.check("formatDateTime", "unknown keyword -> INVALID_INPUT",
+            c("formatDateTime", {"datetime": "2026-04-22T10:30:00Z",
+                                 "inputFormat": "iso",
+                                 "outputFormat": "invalid_format",
+                                 "timezone": "UTC"}),
+            lambda v: envelope_error(v, "FORMAT_DATETIME", "INVALID_INPUT")
+                      and envelope_field(v, "DETAIL") == "format=invalid_format")
+    r.check("formatDateTime", "empty output -> INVALID_INPUT",
+            c("formatDateTime", {"datetime": "2026-04-22T10:30:00Z",
+                                 "inputFormat": "iso",
+                                 "outputFormat": "",
+                                 "timezone": "UTC"}),
+            lambda v: envelope_error(v, "FORMAT_DATETIME", "INVALID_INPUT"))
+    # Sanity: strftime with `%` tokens must still work
+    r.check("formatDateTime", "strftime %Y-%m-%d works",
+            c("formatDateTime", {"datetime": "2026-04-22T10:30:00Z",
+                                 "inputFormat": "iso",
+                                 "outputFormat": "%Y-%m-%d",
+                                 "timezone": "UTC"}),
+            lambda v: envelope_ok(v, "FORMAT_DATETIME")
+                      and envelope_field(v, "RESULT") == "2026-04-22")
+
     now = c("currentDateTime", {"timezone": "UTC", "format": "iso"})
     r.check("currentDateTime", "UTC iso", now,
             lambda v: envelope_ok(v, "CURRENT_DATE_TIME")
@@ -801,7 +826,9 @@ def test_analog(r: TestRunner) -> None:
     r.check("wheatstoneBridge", "R1=100 R2=200 R3=300", wh,
             lambda v: TestRunner.close(envelope_result(v, "WHEATSTONE_BRIDGE"), 600.0, 1e-4))
 
-    # Regression: voltageDivider must reject negative resistances
+    # Regression: voltageDivider must reject non-positive resistances. Zero
+    # was previously accepted (returning Vout=Vin for R1=0), which is the
+    # ideal-short corner case — reject it so callers spot bad inputs.
     r.check("voltageDivider", "negative r1 -> INVALID_INPUT",
             c("voltageDivider", {"vin": "10", "r1": "-100", "r2": "50"}),
             lambda v: envelope_error(v, "VOLTAGE_DIVIDER", "INVALID_INPUT")
@@ -810,8 +837,17 @@ def test_analog(r: TestRunner) -> None:
             c("voltageDivider", {"vin": "10", "r1": "100", "r2": "-50"}),
             lambda v: envelope_error(v, "VOLTAGE_DIVIDER", "INVALID_INPUT")
                       and envelope_field(v, "DETAIL") == "r2=-50")
+    r.check("voltageDivider", "zero r1 -> INVALID_INPUT",
+            c("voltageDivider", {"vin": "5", "r1": "0", "r2": "1000"}),
+            lambda v: envelope_error(v, "VOLTAGE_DIVIDER", "INVALID_INPUT")
+                      and "r1 must be positive" in (envelope_field(v, "REASON") or ""))
+    r.check("voltageDivider", "zero r2 -> INVALID_INPUT",
+            c("voltageDivider", {"vin": "5", "r1": "1000", "r2": "0"}),
+            lambda v: envelope_error(v, "VOLTAGE_DIVIDER", "INVALID_INPUT")
+                      and "r2 must be positive" in (envelope_field(v, "REASON") or ""))
 
-    # Regression: currentDivider must reject negative resistances
+    # Regression: currentDivider must reject non-positive resistances. R=0
+    # used to pass silently (I1=Itotal, I2=0), masking upstream bad data.
     r.check("currentDivider", "negative r1 -> INVALID_INPUT",
             c("currentDivider", {"totalCurrent": "5", "r1": "-100", "r2": "50"}),
             lambda v: envelope_error(v, "CURRENT_DIVIDER", "INVALID_INPUT")
@@ -820,6 +856,63 @@ def test_analog(r: TestRunner) -> None:
             c("currentDivider", {"totalCurrent": "5", "r1": "100", "r2": "-50"}),
             lambda v: envelope_error(v, "CURRENT_DIVIDER", "INVALID_INPUT")
                       and envelope_field(v, "DETAIL") == "r2=-50")
+    r.check("currentDivider", "zero r1 -> INVALID_INPUT",
+            c("currentDivider", {"totalCurrent": "1", "r1": "0", "r2": "1000"}),
+            lambda v: envelope_error(v, "CURRENT_DIVIDER", "INVALID_INPUT")
+                      and "r1 must be positive" in (envelope_field(v, "REASON") or ""))
+    r.check("currentDivider", "zero r2 -> INVALID_INPUT",
+            c("currentDivider", {"totalCurrent": "1", "r1": "1000", "r2": "0"}),
+            lambda v: envelope_error(v, "CURRENT_DIVIDER", "INVALID_INPUT")
+                      and "r2 must be positive" in (envelope_field(v, "REASON") or ""))
+
+    # Regression: ohmsLaw must reject negative V/I/R/P. Previously V=-5, I=1
+    # produced R=-5, P=-5 (non-physical).
+    r.check("ohmsLaw", "negative voltage (V,I) -> INVALID_INPUT",
+            c("ohmsLaw", {"voltage": "-5", "current": "1",
+                          "resistance": "", "power": ""}),
+            lambda v: envelope_error(v, "OHMS_LAW", "INVALID_INPUT")
+                      and "voltage must not be negative" in (envelope_field(v, "REASON") or ""))
+    r.check("ohmsLaw", "negative current (I,R) -> INVALID_INPUT",
+            c("ohmsLaw", {"voltage": "", "current": "-2",
+                          "resistance": "10", "power": ""}),
+            lambda v: envelope_error(v, "OHMS_LAW", "INVALID_INPUT")
+                      and "current must not be negative" in (envelope_field(v, "REASON") or ""))
+    r.check("ohmsLaw", "negative resistance (V,R) -> INVALID_INPUT",
+            c("ohmsLaw", {"voltage": "5", "current": "",
+                          "resistance": "-10", "power": ""}),
+            lambda v: envelope_error(v, "OHMS_LAW", "INVALID_INPUT")
+                      and "resistance must not be negative" in (envelope_field(v, "REASON") or ""))
+    r.check("ohmsLaw", "negative power (R,P) -> INVALID_INPUT",
+            c("ohmsLaw", {"voltage": "", "current": "",
+                          "resistance": "10", "power": "-100"}),
+            lambda v: envelope_error(v, "OHMS_LAW", "INVALID_INPUT")
+                      and "power must not be negative" in (envelope_field(v, "REASON") or ""))
+
+    # Regression: resistorCombination series mode used to silently accept
+    # negative values (e.g. [-100,200,300] → 400). Must now reject.
+    r.check("resistorCombination", "series negative -> INVALID_INPUT",
+            c("resistorCombination", {"values": "-100,200,300", "mode": "series"}),
+            lambda v: envelope_error(v, "RESISTOR_COMBINATION", "INVALID_INPUT")
+                      and "must not be negative" in (envelope_field(v, "REASON") or ""))
+    r.check("inductorCombination", "series negative -> INVALID_INPUT",
+            c("inductorCombination", {"values": "-0.001,0.002", "mode": "series"}),
+            lambda v: envelope_error(v, "INDUCTOR_COMBINATION", "INVALID_INPUT")
+                      and "must not be negative" in (envelope_field(v, "REASON") or ""))
+    r.check("capacitorCombination", "parallel negative -> INVALID_INPUT",
+            c("capacitorCombination", {"values": "-1e-6,2e-6", "mode": "parallel"}),
+            lambda v: envelope_error(v, "CAPACITOR_COMBINATION", "INVALID_INPUT")
+                      and "must not be negative" in (envelope_field(v, "REASON") or ""))
+
+    # Regression: ledResistor used to accept negative forward/supply voltage.
+    # Vf=-1.5 V previously produced R=325Ω silently.
+    r.check("ledResistor", "negative vf -> INVALID_INPUT",
+            c("ledResistor", {"vs": "5", "vf": "-1.5", "i_f": "0.02"}),
+            lambda v: envelope_error(v, "LED_RESISTOR", "INVALID_INPUT")
+                      and "forward voltage must not be negative" in (envelope_field(v, "REASON") or ""))
+    r.check("ledResistor", "negative vs -> INVALID_INPUT",
+            c("ledResistor", {"vs": "-5", "vf": "2", "i_f": "0.02"}),
+            lambda v: envelope_error(v, "LED_RESISTOR", "INVALID_INPUT")
+                      and "supply voltage must not be negative" in (envelope_field(v, "REASON") or ""))
 
     # Regression: rlcResonance must reject non-positive R, L, C
     r.check("rlcResonance", "negative r -> INVALID_INPUT",

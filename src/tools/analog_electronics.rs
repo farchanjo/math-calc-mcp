@@ -46,7 +46,7 @@ thread_local! {
         RefCell::new(Consts::new().expect("failed to initialize astro-float Consts"));
 }
 
-fn precision() -> NonZeroU64 {
+const fn precision() -> NonZeroU64 {
     NonZeroU64::new(DECIMAL128_PRECISION).expect("precision is non-zero")
 }
 
@@ -181,7 +181,7 @@ fn parse_bd(tool: &str, raw: &str, label: &str) -> Result<BigDecimal, String> {
     })
 }
 
-fn is_present(value: &str) -> bool {
+const fn is_present(value: &str) -> bool {
     !value.is_empty()
 }
 
@@ -261,6 +261,7 @@ fn validate_filter_type(tool: &str, filter_type: &str) -> Result<String, String>
 // --- Ohm's law ---
 
 /// Ohm's Law: provide exactly two of V/I/R/P (non-empty) and compute the rest.
+#[must_use] 
 pub fn ohms_law(voltage: &str, current: &str, resistance: &str, power: &str) -> String {
     let has_v = is_present(voltage);
     let has_i = is_present(current);
@@ -325,7 +326,22 @@ fn dispatch_ohms(
     }
 }
 
+fn non_negative(tool: &str, value: &BigDecimal, name: &str) -> Result<(), String> {
+    if value.is_negative() {
+        Err(error_with_detail(
+            tool,
+            ErrorCode::InvalidInput,
+            &format!("{name} must not be negative"),
+            &format!("{name}={}", strip_plain(value)),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn ohms_from_vi(voltage: BigDecimal, current: BigDecimal) -> Result<OhmsValues, String> {
+    non_negative(OHMS_LAW, &voltage, "voltage")?;
+    non_negative(OHMS_LAW, &current, "current")?;
     non_zero(OHMS_LAW, &current, "current")?;
     let resistance = div_scaled(&voltage, &current);
     let power = mul_ctx(&voltage, &current);
@@ -338,6 +354,8 @@ fn ohms_from_vi(voltage: BigDecimal, current: BigDecimal) -> Result<OhmsValues, 
 }
 
 fn ohms_from_vr(voltage: BigDecimal, resistance: BigDecimal) -> Result<OhmsValues, String> {
+    non_negative(OHMS_LAW, &voltage, "voltage")?;
+    non_negative(OHMS_LAW, &resistance, "resistance")?;
     non_zero(OHMS_LAW, &resistance, "resistance")?;
     let current = div_scaled(&voltage, &resistance);
     let power = mul_ctx(&voltage, &current);
@@ -350,6 +368,8 @@ fn ohms_from_vr(voltage: BigDecimal, resistance: BigDecimal) -> Result<OhmsValue
 }
 
 fn ohms_from_vp(voltage: BigDecimal, power: BigDecimal) -> Result<OhmsValues, String> {
+    non_negative(OHMS_LAW, &voltage, "voltage")?;
+    non_negative(OHMS_LAW, &power, "power")?;
     non_zero(OHMS_LAW, &voltage, "voltage")?;
     let current = div_scaled(&power, &voltage);
     let resistance = div_scaled(&voltage, &current);
@@ -362,6 +382,8 @@ fn ohms_from_vp(voltage: BigDecimal, power: BigDecimal) -> Result<OhmsValues, St
 }
 
 fn ohms_from_ir(current: BigDecimal, resistance: BigDecimal) -> Result<OhmsValues, String> {
+    non_negative(OHMS_LAW, &current, "current")?;
+    non_negative(OHMS_LAW, &resistance, "resistance")?;
     let voltage = mul_ctx(&current, &resistance);
     let power = mul_ctx(&voltage, &current);
     Ok(OhmsValues {
@@ -373,6 +395,8 @@ fn ohms_from_ir(current: BigDecimal, resistance: BigDecimal) -> Result<OhmsValue
 }
 
 fn ohms_from_ip(current: BigDecimal, power: BigDecimal) -> Result<OhmsValues, String> {
+    non_negative(OHMS_LAW, &current, "current")?;
+    non_negative(OHMS_LAW, &power, "power")?;
     non_zero(OHMS_LAW, &current, "current")?;
     let voltage = div_scaled(&power, &current);
     let resistance = div_scaled(&voltage, &current);
@@ -385,6 +409,8 @@ fn ohms_from_ip(current: BigDecimal, power: BigDecimal) -> Result<OhmsValues, St
 }
 
 fn ohms_from_rp(resistance: BigDecimal, power: BigDecimal) -> Result<OhmsValues, String> {
+    non_negative(OHMS_LAW, &resistance, "resistance")?;
+    non_negative(OHMS_LAW, &power, "power")?;
     non_zero(OHMS_LAW, &resistance, "resistance")?;
     let pr_product = mul_ctx(&power, &resistance);
     let voltage = af_sqrt(&pr_product);
@@ -410,6 +436,7 @@ fn ohms_envelope(values: &OhmsValues) -> String {
 // --- Resistor / Capacitor / Inductor combination ---
 
 /// Resistor combination: series sums, parallel reciprocal-sums.
+#[must_use] 
 pub fn resistor_combination(values: &str, mode: &str) -> String {
     match combine(RESISTOR_COMBINATION, values, mode, false) {
         Ok(val) => Response::ok(RESISTOR_COMBINATION)
@@ -420,6 +447,7 @@ pub fn resistor_combination(values: &str, mode: &str) -> String {
 }
 
 /// Capacitor combination: series reciprocal-sums, parallel sums (reversed from R/L).
+#[must_use] 
 pub fn capacitor_combination(values: &str, mode: &str) -> String {
     match combine(CAPACITOR_COMBINATION, values, mode, true) {
         Ok(val) => Response::ok(CAPACITOR_COMBINATION)
@@ -430,6 +458,7 @@ pub fn capacitor_combination(values: &str, mode: &str) -> String {
 }
 
 /// Inductor combination: same as resistor (series sums, parallel reciprocal-sums).
+#[must_use] 
 pub fn inductor_combination(values: &str, mode: &str) -> String {
     match combine(INDUCTOR_COMBINATION, values, mode, false) {
         Ok(val) => Response::ok(INDUCTOR_COMBINATION)
@@ -455,18 +484,25 @@ fn combine(tool: &str, values: &str, mode: &str, reversed: bool) -> Result<BigDe
         }
     };
     if use_sum {
-        Ok(sum_values(&parsed))
+        sum_values(tool, &parsed)
     } else {
         reciprocal_sum(tool, &parsed)
     }
 }
 
-fn sum_values(values: &[BigDecimal]) -> BigDecimal {
+fn sum_values(tool: &str, values: &[BigDecimal]) -> Result<BigDecimal, String> {
     let mut total = BigDecimal::zero();
     for val in values {
+        if val.is_negative() {
+            return Err(error(
+                tool,
+                ErrorCode::InvalidInput,
+                "component value must not be negative",
+            ));
+        }
         total = add_ctx(&total, val);
     }
-    total
+    Ok(total)
 }
 
 fn reciprocal_sum(tool: &str, values: &[BigDecimal]) -> Result<BigDecimal, String> {
@@ -490,6 +526,7 @@ fn reciprocal_sum(tool: &str, values: &[BigDecimal]) -> Result<BigDecimal, Strin
 // --- Dividers ---
 
 /// Voltage divider: Vout = Vin * R2 / (R1 + R2).
+#[must_use] 
 pub fn voltage_divider(vin: &str, r1: &str, r2: &str) -> String {
     let vin_v = match parse_bd(VOLTAGE_DIVIDER, vin, "vin") {
         Ok(v) => v,
@@ -503,30 +540,13 @@ pub fn voltage_divider(vin: &str, r1: &str, r2: &str) -> String {
         Ok(v) => v,
         Err(e) => return e,
     };
-    if r1_v.is_negative() {
-        return error_with_detail(
-            VOLTAGE_DIVIDER,
-            ErrorCode::InvalidInput,
-            "r1 must not be negative",
-            &format!("r1={r1}"),
-        );
+    if let Err(e) = positive(VOLTAGE_DIVIDER, &r1_v, "r1") {
+        return e;
     }
-    if r2_v.is_negative() {
-        return error_with_detail(
-            VOLTAGE_DIVIDER,
-            ErrorCode::InvalidInput,
-            "r2 must not be negative",
-            &format!("r2={r2}"),
-        );
+    if let Err(e) = positive(VOLTAGE_DIVIDER, &r2_v, "r2") {
+        return e;
     }
     let sum = add_ctx(&r1_v, &r2_v);
-    if sum.is_zero() {
-        return error(
-            VOLTAGE_DIVIDER,
-            ErrorCode::DivisionByZero,
-            "R1 + R2 must not be zero",
-        );
-    }
     let vout = div_scaled(&mul_ctx(&vin_v, &r2_v), &sum);
     Response::ok(VOLTAGE_DIVIDER)
         .field("VOUT", strip_plain(&vout))
@@ -534,6 +554,7 @@ pub fn voltage_divider(vin: &str, r1: &str, r2: &str) -> String {
 }
 
 /// Current divider: I1 = It*R2/(R1+R2), I2 = It*R1/(R1+R2).
+#[must_use] 
 pub fn current_divider(total_current: &str, r1: &str, r2: &str) -> String {
     let it = match parse_bd(CURRENT_DIVIDER, total_current, "total_current") {
         Ok(v) => v,
@@ -547,30 +568,13 @@ pub fn current_divider(total_current: &str, r1: &str, r2: &str) -> String {
         Ok(v) => v,
         Err(e) => return e,
     };
-    if r1_v.is_negative() {
-        return error_with_detail(
-            CURRENT_DIVIDER,
-            ErrorCode::InvalidInput,
-            "r1 must not be negative",
-            &format!("r1={r1}"),
-        );
+    if let Err(e) = positive(CURRENT_DIVIDER, &r1_v, "r1") {
+        return e;
     }
-    if r2_v.is_negative() {
-        return error_with_detail(
-            CURRENT_DIVIDER,
-            ErrorCode::InvalidInput,
-            "r2 must not be negative",
-            &format!("r2={r2}"),
-        );
+    if let Err(e) = positive(CURRENT_DIVIDER, &r2_v, "r2") {
+        return e;
     }
     let sum = add_ctx(&r1_v, &r2_v);
-    if sum.is_zero() {
-        return error(
-            CURRENT_DIVIDER,
-            ErrorCode::DivisionByZero,
-            "R1 + R2 must not be zero",
-        );
-    }
     let i1 = div_scaled(&mul_ctx(&it, &r2_v), &sum);
     let i2 = div_scaled(&mul_ctx(&it, &r1_v), &sum);
     Response::ok(CURRENT_DIVIDER)
@@ -582,6 +586,7 @@ pub fn current_divider(total_current: &str, r1: &str, r2: &str) -> String {
 // --- Time constants ---
 
 /// RC time constant and cutoff frequency.
+#[must_use] 
 pub fn rc_time_constant(resistance: &str, capacitance: &str) -> String {
     let r = match parse_bd(RC_TIME_CONSTANT, resistance, "resistance") {
         Ok(v) => v,
@@ -607,6 +612,7 @@ pub fn rc_time_constant(resistance: &str, capacitance: &str) -> String {
 }
 
 /// RL time constant and cutoff frequency.
+#[must_use] 
 pub fn rl_time_constant(resistance: &str, inductance: &str) -> String {
     let r = match parse_bd(RL_TIME_CONSTANT, resistance, "resistance") {
         Ok(v) => v,
@@ -633,71 +639,48 @@ pub fn rl_time_constant(resistance: &str, inductance: &str) -> String {
 
 // --- RLC / impedance ---
 
-/// RLC resonant frequency, Q factor, bandwidth.
-pub fn rlc_resonance(r: &str, l: &str, c: &str) -> String {
-    let r_v = match parse_bd(RLC_RESONANCE, r, "resistance") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let l_v = match parse_bd(RLC_RESONANCE, l, "inductance") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let c_v = match parse_bd(RLC_RESONANCE, c, "capacitance") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    if r_v.is_zero() || r_v.is_negative() {
-        return error_with_detail(
-            RLC_RESONANCE,
-            ErrorCode::InvalidInput,
-            "resistance must be positive",
-            &format!("resistance={r}"),
-        );
-    }
-    if l_v.is_zero() || l_v.is_negative() {
-        return error_with_detail(
-            RLC_RESONANCE,
-            ErrorCode::InvalidInput,
-            "inductance must be positive",
-            &format!("inductance={l}"),
-        );
-    }
-    if c_v.is_zero() || c_v.is_negative() {
-        return error_with_detail(
-            RLC_RESONANCE,
-            ErrorCode::InvalidInput,
-            "capacitance must be positive",
-            &format!("capacitance={c}"),
-        );
-    }
-    let lc = mul_ctx(&l_v, &c_v);
-    if let Err(e) = positive(RLC_RESONANCE, &lc, "L*C") {
-        return e;
-    }
+struct RlcInputs {
+    r: BigDecimal,
+    l: BigDecimal,
+    c: BigDecimal,
+}
+
+fn parse_rlc_positive(r: &str, l: &str, c: &str) -> Result<RlcInputs, String> {
+    let r_v = parse_bd(RLC_RESONANCE, r, "resistance")?;
+    let l_v = parse_bd(RLC_RESONANCE, l, "inductance")?;
+    let c_v = parse_bd(RLC_RESONANCE, c, "capacitance")?;
+    positive(RLC_RESONANCE, &r_v, "resistance")?;
+    positive(RLC_RESONANCE, &l_v, "inductance")?;
+    positive(RLC_RESONANCE, &c_v, "capacitance")?;
+    Ok(RlcInputs {
+        r: r_v,
+        l: l_v,
+        c: c_v,
+    })
+}
+
+fn rlc_resonant_frequency(l: &BigDecimal, c: &BigDecimal) -> BigDecimal {
+    let lc = mul_ctx(l, c);
     let sqrt_lc = af_sqrt(&lc);
-    let resonant_denom = mul_ctx(&TWO_PI, &sqrt_lc);
-    let resonant_freq = div_scaled(&BigDecimal::from(1), &resonant_denom);
-    if c_v.is_zero() {
-        return error(
-            RLC_RESONANCE,
-            ErrorCode::DivisionByZero,
-            "capacitance must not be zero",
-        );
-    }
-    let l_over_c = div_scaled(&l_v, &c_v);
-    if let Err(e) = positive(RLC_RESONANCE, &l_over_c, "L/C") {
-        return e;
-    }
+    let denom = mul_ctx(&TWO_PI, &sqrt_lc);
+    div_scaled(&BigDecimal::from(1), &denom)
+}
+
+fn rlc_q_factor(r: &BigDecimal, l: &BigDecimal, c: &BigDecimal) -> BigDecimal {
+    let l_over_c = div_scaled(l, c);
     let z_ratio = af_sqrt(&l_over_c);
-    if r_v.is_zero() {
-        return error(
-            RLC_RESONANCE,
-            ErrorCode::DivisionByZero,
-            "resistance must not be zero",
-        );
-    }
-    let q_factor = div_scaled(&z_ratio, &r_v);
+    div_scaled(&z_ratio, r)
+}
+
+/// RLC resonant frequency, Q factor, bandwidth.
+#[must_use]
+pub fn rlc_resonance(r: &str, l: &str, c: &str) -> String {
+    let inputs = match parse_rlc_positive(r, l, c) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let resonant_freq = rlc_resonant_frequency(&inputs.l, &inputs.c);
+    let q_factor = rlc_q_factor(&inputs.r, &inputs.l, &inputs.c);
     if q_factor.is_zero() {
         return error(
             RLC_RESONANCE,
@@ -713,77 +696,68 @@ pub fn rlc_resonance(r: &str, l: &str, c: &str) -> String {
         .build()
 }
 
-/// Series RLC impedance magnitude + phase (degrees) + real + imag.
-pub fn impedance(r: &str, l: &str, c: &str, frequency: &str) -> String {
-    let r_v = match parse_bd(IMPEDANCE, r, "resistance") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let l_v = match parse_bd(IMPEDANCE, l, "inductance") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let c_v = match parse_bd(IMPEDANCE, c, "capacitance") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let f = match parse_bd(IMPEDANCE, frequency, "frequency") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    if f.is_zero() || f.is_negative() {
-        return error_with_detail(
-            IMPEDANCE,
-            ErrorCode::InvalidInput,
-            "frequency must be positive",
-            &format!("frequency={frequency}"),
-        );
-    }
+struct ImpedanceInputs {
+    r: BigDecimal,
+    l: BigDecimal,
+    c: BigDecimal,
+    frequency: BigDecimal,
+}
+
+fn parse_impedance(r: &str, l: &str, c: &str, frequency: &str) -> Result<ImpedanceInputs, String> {
+    let r_v = parse_bd(IMPEDANCE, r, "resistance")?;
+    let l_v = parse_bd(IMPEDANCE, l, "inductance")?;
+    let c_v = parse_bd(IMPEDANCE, c, "capacitance")?;
+    let f = parse_bd(IMPEDANCE, frequency, "frequency")?;
+    positive(IMPEDANCE, &f, "frequency")?;
+    positive(IMPEDANCE, &c_v, "capacitance")?;
     if r_v.is_negative() {
-        return error_with_detail(
+        return Err(error_with_detail(
             IMPEDANCE,
             ErrorCode::InvalidInput,
             "resistance must not be negative",
-            &format!("resistance={r}"),
-        );
+            &format!("resistance={}", strip_plain(&r_v)),
+        ));
     }
     if l_v.is_negative() {
-        return error_with_detail(
+        return Err(error_with_detail(
             IMPEDANCE,
             ErrorCode::InvalidInput,
             "inductance must not be negative",
-            &format!("inductance={l}"),
-        );
+            &format!("inductance={}", strip_plain(&l_v)),
+        ));
     }
-    if c_v.is_zero() || c_v.is_negative() {
-        return error_with_detail(
-            IMPEDANCE,
-            ErrorCode::InvalidInput,
-            "capacitance must be positive",
-            &format!("capacitance={c}"),
-        );
-    }
-    let omega = mul_ctx(&TWO_PI, &f);
-    let x_l = mul_ctx(&omega, &l_v);
-    let omega_c = mul_ctx(&omega, &c_v);
-    if omega_c.is_zero() {
-        return error(
-            IMPEDANCE,
-            ErrorCode::DivisionByZero,
-            "omega*C must not be zero",
-        );
-    }
+    Ok(ImpedanceInputs {
+        r: r_v,
+        l: l_v,
+        c: c_v,
+        frequency: f,
+    })
+}
+
+fn series_reactance(omega: &BigDecimal, l: &BigDecimal, c: &BigDecimal) -> BigDecimal {
+    let x_l = mul_ctx(omega, l);
+    let omega_c = mul_ctx(omega, c);
     let x_c = div_scaled(&BigDecimal::from(1), &omega_c);
-    let reactance = sub_ctx(&x_l, &x_c);
-    let r_squared = mul_ctx(&r_v, &r_v);
+    sub_ctx(&x_l, &x_c)
+}
+
+/// Series RLC impedance magnitude + phase (degrees) + real + imag.
+#[must_use]
+pub fn impedance(r: &str, l: &str, c: &str, frequency: &str) -> String {
+    let inputs = match parse_impedance(r, l, c, frequency) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let omega = mul_ctx(&TWO_PI, &inputs.frequency);
+    let reactance = series_reactance(&omega, &inputs.l, &inputs.c);
+    let r_squared = mul_ctx(&inputs.r, &inputs.r);
     let x_squared = mul_ctx(&reactance, &reactance);
-    let sum_sq = add_ctx(&r_squared, &x_squared);
-    let magnitude = af_sqrt(&sum_sq);
-    let phase_deg = af_atan2_degrees(&reactance, &r_v);
+    let magnitude = af_sqrt(&add_ctx(&r_squared, &x_squared));
+    let phase_deg = af_atan2_degrees(&reactance, &inputs.r);
     Response::ok(IMPEDANCE)
         .field("MAGNITUDE", strip_plain(&magnitude))
         .field("PHASE_DEG", strip_plain(&phase_deg))
-        .field("REAL", strip_plain(&r_v))
+        .field("REAL", strip_plain(&inputs.r))
         .field("IMAG", strip_plain(&reactance))
         .build()
 }
@@ -791,6 +765,7 @@ pub fn impedance(r: &str, l: &str, c: &str, frequency: &str) -> String {
 // --- Decibel ---
 
 /// Decibel conversion: `powerToDb`, `voltageToDb`, `dbToPower`, `dbToVoltage`.
+#[must_use] 
 pub fn decibel_convert(value: &str, mode: &str) -> String {
     let val = match parse_bd(DECIBEL_CONVERT, value, "value") {
         Ok(v) => v,
@@ -834,6 +809,7 @@ fn compute_decibel(val: &BigDecimal, mode: &str) -> Result<BigDecimal, String> {
 // --- Filter cutoff ---
 
 /// RC filter cutoff frequency. fc = 1 / (2π R C).
+#[must_use] 
 pub fn filter_cutoff(resistance: &str, reactive: &str, filter_type: &str) -> String {
     let r = match parse_bd(FILTER_CUTOFF, resistance, "resistance") {
         Ok(v) => v,
@@ -865,12 +841,13 @@ pub fn filter_cutoff(resistance: &str, reactive: &str, filter_type: &str) -> Str
 // --- LED / Wheatstone ---
 
 /// LED current-limiting resistor: R = (Vs - Vf) / If.
+#[must_use] 
 pub fn led_resistor(vs: &str, vf: &str, i_f: &str) -> String {
-    let vs_v = match parse_bd(LED_RESISTOR, vs, "supply_voltage") {
+    let supply = match parse_bd(LED_RESISTOR, vs, "supply_voltage") {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let vf_v = match parse_bd(LED_RESISTOR, vf, "forward_voltage") {
+    let forward = match parse_bd(LED_RESISTOR, vf, "forward_voltage") {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -878,7 +855,23 @@ pub fn led_resistor(vs: &str, vf: &str, i_f: &str) -> String {
         Ok(v) => v,
         Err(e) => return e,
     };
-    if vs_v <= vf_v {
+    if supply.is_negative() {
+        return error_with_detail(
+            LED_RESISTOR,
+            ErrorCode::InvalidInput,
+            "supply voltage must not be negative",
+            &format!("supply_voltage={}", strip_plain(&supply)),
+        );
+    }
+    if forward.is_negative() {
+        return error_with_detail(
+            LED_RESISTOR,
+            ErrorCode::InvalidInput,
+            "forward voltage must not be negative",
+            &format!("forward_voltage={}", strip_plain(&forward)),
+        );
+    }
+    if supply <= forward {
         return error(
             LED_RESISTOR,
             ErrorCode::InvalidInput,
@@ -892,7 +885,7 @@ pub fn led_resistor(vs: &str, vf: &str, i_f: &str) -> String {
             "forward current must be greater than zero",
         );
     }
-    let diff = sub_ctx(&vs_v, &vf_v);
+    let diff = sub_ctx(&supply, &forward);
     let resistance = div_scaled(&diff, &if_v);
     let power = mul_ctx(&diff, &if_v);
     Response::ok(LED_RESISTOR)
@@ -902,6 +895,7 @@ pub fn led_resistor(vs: &str, vf: &str, i_f: &str) -> String {
 }
 
 /// Wheatstone bridge balance resistor: R4 = R3 * R2 / R1.
+#[must_use] 
 pub fn wheatstone_bridge(r1: &str, r2: &str, r3: &str) -> String {
     let r1_v = match parse_bd(WHEATSTONE_BRIDGE, r1, "r1") {
         Ok(v) => v,
@@ -1251,7 +1245,7 @@ mod tests {
         let out = voltage_divider("10", "-100", "50");
         assert!(out.contains("VOLTAGE_DIVIDER: ERROR"));
         assert!(out.contains("INVALID_INPUT"));
-        assert!(out.contains("r1 must not be negative"));
+        assert!(out.contains("r1 must be positive"));
     }
 
     #[test]
@@ -1259,7 +1253,24 @@ mod tests {
         let out = voltage_divider("10", "100", "-50");
         assert!(out.contains("VOLTAGE_DIVIDER: ERROR"));
         assert!(out.contains("INVALID_INPUT"));
-        assert!(out.contains("r2 must not be negative"));
+        assert!(out.contains("r2 must be positive"));
+    }
+
+    #[test]
+    fn voltage_divider_rejects_zero_r1() {
+        // Regression: previously silently returned Vout=Vin with R1=0 (short).
+        let out = voltage_divider("5", "0", "1000");
+        assert!(out.contains("VOLTAGE_DIVIDER: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("r1 must be positive"));
+    }
+
+    #[test]
+    fn voltage_divider_rejects_zero_r2() {
+        let out = voltage_divider("5", "1000", "0");
+        assert!(out.contains("VOLTAGE_DIVIDER: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("r2 must be positive"));
     }
 
     #[test]
@@ -1267,7 +1278,7 @@ mod tests {
         let out = current_divider("5", "-100", "50");
         assert!(out.contains("CURRENT_DIVIDER: ERROR"));
         assert!(out.contains("INVALID_INPUT"));
-        assert!(out.contains("r1 must not be negative"));
+        assert!(out.contains("r1 must be positive"));
     }
 
     #[test]
@@ -1275,7 +1286,96 @@ mod tests {
         let out = current_divider("5", "100", "-50");
         assert!(out.contains("CURRENT_DIVIDER: ERROR"));
         assert!(out.contains("INVALID_INPUT"));
-        assert!(out.contains("r2 must not be negative"));
+        assert!(out.contains("r2 must be positive"));
+    }
+
+    #[test]
+    fn current_divider_rejects_zero_r1() {
+        // Regression: previously returned I1=Itotal, I2=0 with R1=0 (short).
+        let out = current_divider("1", "0", "1000");
+        assert!(out.contains("CURRENT_DIVIDER: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("r1 must be positive"));
+    }
+
+    #[test]
+    fn current_divider_rejects_zero_r2() {
+        let out = current_divider("1", "1000", "0");
+        assert!(out.contains("CURRENT_DIVIDER: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("r2 must be positive"));
+    }
+
+    #[test]
+    fn ohms_law_rejects_negative_voltage_vi() {
+        // Regression: V=-5, I=1 used to produce R=-5, P=-5 (non-physical).
+        let out = ohms_law("-5", "1", "", "");
+        assert!(out.contains("OHMS_LAW: ERROR"));
+        assert!(out.contains("voltage must not be negative"));
+    }
+
+    #[test]
+    fn ohms_law_rejects_negative_current_ir() {
+        let out = ohms_law("", "-2", "10", "");
+        assert!(out.contains("OHMS_LAW: ERROR"));
+        assert!(out.contains("current must not be negative"));
+    }
+
+    #[test]
+    fn ohms_law_rejects_negative_resistance_vr() {
+        let out = ohms_law("5", "", "-10", "");
+        assert!(out.contains("OHMS_LAW: ERROR"));
+        assert!(out.contains("resistance must not be negative"));
+    }
+
+    #[test]
+    fn ohms_law_rejects_negative_power_rp() {
+        let out = ohms_law("", "", "10", "-100");
+        assert!(out.contains("OHMS_LAW: ERROR"));
+        assert!(out.contains("power must not be negative"));
+    }
+
+    #[test]
+    fn resistor_series_rejects_negative() {
+        // Regression: series mode used to accept [-100, 200, 300] → 400 silently.
+        let out = resistor_combination("-100, 200, 300", "series");
+        assert!(out.contains("RESISTOR_COMBINATION: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("must not be negative"));
+    }
+
+    #[test]
+    fn inductor_series_rejects_negative() {
+        let out = inductor_combination("-0.001, 0.002", "series");
+        assert!(out.contains("INDUCTOR_COMBINATION: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("must not be negative"));
+    }
+
+    #[test]
+    fn capacitor_parallel_rejects_negative() {
+        // For capacitors, parallel is the additive mode (reversed from R/L).
+        let out = capacitor_combination("-1e-6, 2e-6", "parallel");
+        assert!(out.contains("CAPACITOR_COMBINATION: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("must not be negative"));
+    }
+
+    #[test]
+    fn led_resistor_rejects_negative_vf() {
+        // Regression: Vf=-1.5 used to compute R=325 silently (non-physical).
+        let out = led_resistor("5", "-1.5", "0.02");
+        assert!(out.contains("LED_RESISTOR: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("forward voltage must not be negative"));
+    }
+
+    #[test]
+    fn led_resistor_rejects_negative_vs() {
+        let out = led_resistor("-5", "2", "0.02");
+        assert!(out.contains("LED_RESISTOR: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("supply voltage must not be negative"));
     }
 
     #[test]

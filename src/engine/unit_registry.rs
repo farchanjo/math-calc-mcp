@@ -5,8 +5,8 @@
 //! Arithmetic matches Java `MathContext.DECIMAL128` (34 significant digits)
 //! combined with `RoundingMode.HALF_UP`:
 //!
-//! * multiplications use [`Context`] with precision 34 + HALF_UP,
-//! * divisions use [`BigDecimal::with_scale_round`] at scale 34 + HALF_UP,
+//! * multiplications use [`Context`] with precision 34 + `HALF_UP`,
+//! * divisions use [`BigDecimal::with_scale_round`] at scale 34 + `HALF_UP`,
 //!
 //! matching `BigDecimal.divide(divisor, FACTOR_SCALE, ROUNDING)` semantics.
 //!
@@ -119,7 +119,7 @@ const ALL_CATEGORIES: [UnitCategory; 21] = [
 impl UnitCategory {
     /// Uppercase name matching the Java enum literal (e.g. `"LENGTH"`).
     #[must_use]
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::DataStorage => "DATA_STORAGE",
             Self::Length => "LENGTH",
@@ -162,7 +162,7 @@ impl UnitCategory {
 
     /// All 21 categories in Java declaration order.
     #[must_use]
-    pub fn all() -> &'static [UnitCategory] {
+    pub const fn all() -> &'static [Self] {
         &ALL_CATEGORIES
     }
 }
@@ -209,7 +209,7 @@ fn mul(a: &BigDecimal, b: &BigDecimal) -> BigDecimal {
 }
 
 /// Division mirroring `a.divide(b, FACTOR_SCALE, ROUNDING)` in Java:
-/// quotient truncated/rounded to scale 34 with HALF_UP.
+/// quotient truncated/rounded to scale 34 with `HALF_UP`.
 fn div_scale(a: &BigDecimal, b: &BigDecimal) -> BigDecimal {
     let quotient = a / b;
     quotient.with_scale_round(FACTOR_SCALE, RoundingMode::HalfUp)
@@ -697,6 +697,12 @@ fn require_same_category(
 ///   categories.
 /// * [`UnitError::UnknownTemperatureUnit`] if a temperature code is malformed
 ///   (should not happen for registered codes).
+///
+/// # Panics
+/// Panics only if the registry is internally corrupted — every
+/// non-temperature unit is populated with a `to_base_factor` at construction
+/// time, so `expect` on the `Option` is unreachable for caller-observable
+/// inputs.
 pub fn convert(value: &BigDecimal, from: &str, to: &str) -> Result<BigDecimal, UnitError> {
     let source = require_unit(from)?;
     let target = require_unit(to)?;
@@ -748,11 +754,16 @@ pub fn convert_in_category(
 
 /// All 21 categories in Java declaration order.
 #[must_use]
-pub fn list_categories() -> &'static [UnitCategory] {
+pub const fn list_categories() -> &'static [UnitCategory] {
     &ALL_CATEGORIES
 }
 
 /// All units within `category`, preserving Java registration order.
+///
+/// # Panics
+/// Panics only if the registry is internally corrupted — each indexed code
+/// is guaranteed to resolve in [`UNITS`] because the index and the unit map
+/// are built together from the same registration pass.
 #[must_use]
 pub fn list_units(category: UnitCategory) -> Vec<&'static UnitDefinition> {
     CATEGORY_INDEX
@@ -779,6 +790,10 @@ pub fn find_unit(code: &str) -> Option<&'static UnitDefinition> {
 /// [`UnitError::TemperatureFactor`] when the units are temperatures (they
 /// require formulas, not a fixed factor). See [`convert`] for the other
 /// possible errors.
+///
+/// # Panics
+/// Panics only if the registry is internally corrupted — see [`convert`] for
+/// the same reasoning (non-temperature units always carry a factor).
 pub fn conversion_factor(from: &str, to: &str) -> Result<BigDecimal, UnitError> {
     let source = require_unit(from)?;
     let target = require_unit(to)?;
@@ -889,10 +904,7 @@ pub fn celsius_to_gas_mark(celsius: &BigDecimal) -> Result<i32, UnitError> {
     let mut min_dist: Option<BigDecimal> = None;
     for (mark, c) in GAS_MARK_TO_C.iter() {
         let dist = (celsius - c).abs();
-        let replace = match &min_dist {
-            None => true,
-            Some(current) => dist < *current,
-        };
+        let replace = min_dist.as_ref().is_none_or(|current| dist < *current);
         if replace {
             min_dist = Some(dist);
             closest = *mark;
@@ -949,7 +961,7 @@ mod tests {
         BigDecimal::from_str(s).expect("valid decimal")
     }
 
-    /// Compare two BigDecimals after stripping trailing zeros.
+    /// Compare two `BigDecimals` after stripping trailing zeros.
     fn eq_plain(actual: &BigDecimal, expected: &str) {
         assert_eq!(
             strip_plain(actual),

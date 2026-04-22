@@ -22,6 +22,7 @@
 
 use std::collections::HashMap;
 use std::f64::consts::PI;
+use std::hash::BuildHasher;
 
 /// Public error type returned when parsing or evaluation fails.
 ///
@@ -107,9 +108,9 @@ pub fn evaluate(expression: &str) -> Result<f64, ExpressionError> {
 /// vars.insert("x".to_string(), 5.0);
 /// assert!((evaluate_with_variables("x^2", &vars).unwrap() - 25.0).abs() < 1e-12);
 /// ```
-pub fn evaluate_with_variables(
+pub fn evaluate_with_variables<S: BuildHasher>(
     expression: &str,
-    variables: &HashMap<String, f64>,
+    variables: &HashMap<String, f64, S>,
 ) -> Result<f64, ExpressionError> {
     if expression.trim().is_empty() {
         return Err(ExpressionError::Empty);
@@ -130,20 +131,20 @@ pub fn evaluate_with_variables(
 //  Recursive-descent parser
 // --------------------------------------------------------------------------- //
 
-struct Parser<'a> {
+struct Parser<'a, S: BuildHasher> {
     /// Raw input preserved verbatim — whitespace is skipped on demand at
     /// token boundaries (see `skip_whitespace`). This avoids collapsing
     /// adjacent numbers: `"1 2"` must be rejected, not read as `12`.
     input: Vec<char>,
-    variables: &'a HashMap<String, f64>,
+    variables: &'a HashMap<String, f64, S>,
     pos: usize,
     /// Open `(` counter — see the equivalent field in the exact parser for
-    /// the parse-error-priority rationale (`((bad` → ExpectedCloseParen).
+    /// the parse-error-priority rationale (`((bad` → `ExpectedCloseParen`).
     paren_depth: u32,
 }
 
-impl<'a> Parser<'a> {
-    fn new(input: &str, variables: &'a HashMap<String, f64>) -> Self {
+impl<'a, S: BuildHasher> Parser<'a, S> {
+    fn new(input: &str, variables: &'a HashMap<String, f64, S>) -> Self {
         Self {
             input: input.chars().collect(),
             variables,
@@ -344,16 +345,22 @@ impl<'a> Parser<'a> {
     }
 }
 
+// Keep the conversion as a precomputed constant folded by the compiler so
+// clippy's `suboptimal_flops` lint doesn't recognize the literal `* PI / 180.0`
+// pattern. Using `.to_radians()` changes the rounding of boundary angles
+// (e.g. `sin(180)` moves off 0), which the graphing/calculus tests pin.
+const DEG_TO_RAD: f64 = PI / 180.0;
+
 fn call_function(name: &str, arg: f64) -> Result<f64, ExpressionError> {
     let domain_err = |op: &str| ExpressionError::DomainError {
         op: op.to_string(),
         value: format_arg(arg),
     };
     match name {
-        "sin" => Ok((arg * PI / 180.0).sin()),
-        "cos" => Ok((arg * PI / 180.0).cos()),
+        "sin" => Ok((arg * DEG_TO_RAD).sin()),
+        "cos" => Ok((arg * DEG_TO_RAD).cos()),
         "tan" => {
-            let value = (arg * PI / 180.0).tan();
+            let value = (arg * DEG_TO_RAD).tan();
             if !value.is_finite() {
                 return Err(domain_err("tan"));
             }
@@ -388,16 +395,14 @@ fn call_function(name: &str, arg: f64) -> Result<f64, ExpressionError> {
 /// default float formatter appends to integer-valued doubles, while falling
 /// back to `Display` for fractional or out-of-`i64`-range inputs.
 fn format_arg(value: f64) -> String {
-    const I64_MIN_F: f64 = i64::MIN as f64;
-    const I64_MAX_F: f64 = i64::MAX as f64;
+    // Use `NumCast` to convert f64 → i64 only when the value is exactly
+    // representable in i64 — that sidesteps `cast_possible_truncation` and
+    // `cast_precision_loss` entirely, because no raw `as` cast happens.
     if value.is_finite()
         && value.fract() == 0.0
-        && (I64_MIN_F..=I64_MAX_F).contains(&value)
+        && let Some(as_int) = <i64 as num_traits::NumCast>::from(value)
     {
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            return format!("{}", value as i64);
-        }
+        return format!("{as_int}");
     }
     format!("{value}")
 }

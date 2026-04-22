@@ -1,7 +1,8 @@
-//! Port of `GraphingCalculatorTool.java` — plotting, Newton-Raphson root
-//! solving, and bracketed root finding. Expression evaluation is delegated to
-//! [`crate::engine::expression`], ensuring exact parity with the Java
-//! `ExpressionEvaluator` (degrees-mode trig, IEEE-754 semantics).
+//! Port of `GraphingCalculatorTool.java` — plotting, Newton-Raphson root solving, and bracketed root finding.
+//!
+//! Expression evaluation is delegated to [`crate::engine::expression`],
+//! ensuring exact parity with the Java `ExpressionEvaluator` (degrees-mode
+//! trig, IEEE-754 semantics).
 //!
 //! Every entry point emits the structured response envelope. Plot samples use
 //! block layout (tabular); solve/find-roots return inline payloads.
@@ -47,7 +48,42 @@ fn eval_at(
 //  plot_function
 // --------------------------------------------------------------------------- //
 
+fn plot_finite_decimal(tool: &str, label: &str, value: f64) -> Result<BigDecimal, String> {
+    BigDecimal::from_f64(value).ok_or_else(|| {
+        error_with_detail(
+            tool,
+            ErrorCode::InvalidInput,
+            &format!("{label} is not a finite decimal"),
+            &format!("{label}={value}"),
+        )
+    })
+}
+
+fn sample_plot(
+    tool: &str,
+    expression: &str,
+    variable: &str,
+    min: f64,
+    max: f64,
+    steps: i32,
+) -> Result<Vec<(f64, f64)>, String> {
+    let bd_min = plot_finite_decimal(tool, "min", min)?;
+    let bd_max = plot_finite_decimal(tool, "max", max)?;
+    let step_size =
+        (&bd_max - &bd_min).with_prec(DECIMAL128_PRECISION) / BigDecimal::from(steps);
+    let capacity = usize::try_from(steps).unwrap_or(0).saturating_add(1);
+    let mut rows: Vec<(f64, f64)> = Vec::with_capacity(capacity);
+    for idx in 0..=steps {
+        let x_bd = &bd_min + &step_size * BigDecimal::from(idx);
+        let x = x_bd.to_f64().unwrap_or(f64::NAN);
+        let y = eval_at(tool, expression, variable, x)?;
+        rows.push((x, y));
+    }
+    Ok(rows)
+}
+
 /// Sample `expression` at `steps + 1` equally spaced points between `min` and `max`.
+#[must_use]
 pub fn plot_function(expression: &str, variable: &str, min: f64, max: f64, steps: i32) -> String {
     let tool = TOOL_PLOT_FUNCTION;
     if steps <= 0 {
@@ -66,45 +102,10 @@ pub fn plot_function(expression: &str, variable: &str, min: f64, max: f64, steps
             &format!("min={min} | max={max}"),
         );
     }
-
-    let bd_min = match BigDecimal::from_f64(min) {
-        Some(v) => v,
-        None => {
-            return error_with_detail(
-                tool,
-                ErrorCode::InvalidInput,
-                "min is not a finite decimal",
-                &format!("min={min}"),
-            );
-        }
+    let rows = match sample_plot(tool, expression, variable, min, max, steps) {
+        Ok(v) => v,
+        Err(msg) => return msg,
     };
-    let bd_max = match BigDecimal::from_f64(max) {
-        Some(v) => v,
-        None => {
-            return error_with_detail(
-                tool,
-                ErrorCode::InvalidInput,
-                "max is not a finite decimal",
-                &format!("max={max}"),
-            );
-        }
-    };
-    let bd_steps = BigDecimal::from(steps);
-    let step_size = (&bd_max - &bd_min).with_prec(DECIMAL128_PRECISION) / bd_steps;
-
-    let mut rows: Vec<(f64, f64)> = Vec::with_capacity((steps + 1) as usize);
-    for idx in 0..=steps {
-        let idx_bd = BigDecimal::from(idx);
-        let x_bd = &bd_min + &step_size * idx_bd;
-        let x = x_bd.to_f64().unwrap_or(f64::NAN);
-
-        let y = match eval_at(tool, expression, variable, x) {
-            Ok(v) => v,
-            Err(msg) => return msg,
-        };
-        rows.push((x, y));
-    }
-
     let mut builder = Response::ok(tool)
         .field("STEPS", steps.to_string())
         .field("MIN", format!("{min:?}"))
@@ -122,6 +123,7 @@ pub fn plot_function(expression: &str, variable: &str, min: f64, max: f64, steps
 // --------------------------------------------------------------------------- //
 
 /// Newton-Raphson solver. Returns the root inline or an error envelope.
+#[must_use] 
 pub fn solve_equation(expression: &str, variable: &str, initial_guess: f64) -> String {
     let tool = TOOL_SOLVE_EQUATION;
     let mut guess = initial_guess;
@@ -170,6 +172,7 @@ pub fn solve_equation(expression: &str, variable: &str, initial_guess: f64) -> S
 
 /// Scan `[min, max]` in `SCAN_DIVISIONS` slices, detecting sign changes and
 /// already-at-root samples. Refines bracketed intervals with 50 bisection steps.
+#[must_use] 
 pub fn find_roots(expression: &str, variable: &str, min: f64, max: f64) -> String {
     let tool = TOOL_FIND_ROOTS;
     if min > max {
@@ -194,7 +197,8 @@ pub fn find_roots(expression: &str, variable: &str, min: f64, max: f64) -> Strin
     }
 
     for idx in 1..=SCAN_DIVISIONS {
-        let current_x = min + f64::from(idx) * step;
+        let offset = f64::from(idx) * step;
+        let current_x = min + offset;
         let current_f = match eval_at(tool, expression, variable, current_x) {
             Ok(v) => v,
             Err(msg) => return msg,
@@ -247,7 +251,7 @@ fn bisect(
     let mut upper = upper_bound;
 
     for _ in 0..BISECT_ITERS {
-        let mid = (lower + upper) / 2.0;
+        let mid = f64::midpoint(lower, upper);
         let f_mid = eval_at(tool, expression, variable, mid)?;
         if f_mid.abs() < NEWTON_TOLERANCE {
             return Ok(mid);
@@ -259,7 +263,7 @@ fn bisect(
             lower = mid;
         }
     }
-    Ok((lower + upper) / 2.0)
+    Ok(f64::midpoint(lower, upper))
 }
 
 // --------------------------------------------------------------------------- //
