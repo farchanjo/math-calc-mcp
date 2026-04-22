@@ -315,12 +315,20 @@ def test_programmable(r: TestRunner) -> None:
     r.check("evaluateExact", "0.1+0.2",
             c("evaluateExact", {"expression": "0.1 + 0.2"}),
             lambda v: envelope_result(v, "EVALUATE_EXACT") == "0.3")
-    r.check("evaluateExactWithVariables", "pi*2",
+    # Uses `my_pi` rather than `pi` because constant names are reserved
+    # (regression for evaluateWithVariables pi-override bug).
+    r.check("evaluateExactWithVariables", "my_pi*2",
             c("evaluateExactWithVariables",
-              {"expression": "pi * 2",
-               "variables": '{"pi":"3.1415926535897932384626433"}'}),
+              {"expression": "my_pi * 2",
+               "variables": '{"my_pi":"3.1415926535897932384626433"}'}),
             lambda v: envelope_result(v, "EVALUATE_EXACT_WITH_VARIABLES")
                       == "6.2831853071795864769252866")
+    # Regression: evaluateWithVariables must reject variable names that shadow
+    # engine constants (pi/e/tau/phi).
+    r.check("evaluateWithVariables", "rejects pi override",
+            c("evaluateWithVariables",
+              {"expression": "pi * 2", "variables": '{"pi": 100}'}),
+            lambda v: envelope_error(v, "EVALUATE_WITH_VARIABLES", "INVALID_INPUT"))
     # Regression: exact evaluator must surface DOMAIN_ERROR instead of silently
     # returning 0 when a transcendental leaves its real-valued domain.
     r.check("evaluateExact", "sqrt(-2) -> DOMAIN_ERROR",

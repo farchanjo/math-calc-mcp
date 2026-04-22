@@ -18,6 +18,24 @@ const TOOL_EVALUATE_EXACT_WITH_VARIABLES: &str = "EVALUATE_EXACT_WITH_VARIABLES"
 
 const JSON_DETAIL_MAX: usize = 120;
 
+/// Names that already bind to engine constants and must not be shadowed by
+/// caller-supplied variables. Accepting `{"pi": 3}` would silently wreck any
+/// downstream trig call; rejecting it up front surfaces the naming conflict.
+const RESERVED_VARIABLE_NAMES: &[&str] = &["pi", "e", "tau", "phi"];
+
+fn reject_reserved_names(tool: &str, name: &str) -> Result<(), String> {
+    if RESERVED_VARIABLE_NAMES.contains(&name) {
+        Err(error_with_detail(
+            tool,
+            ErrorCode::InvalidInput,
+            "variable name is reserved for an engine constant",
+            &format!("name={name}"),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn ok_result(tool: &str, value: String) -> String {
     Response::ok(tool).result(value).build()
 }
@@ -32,14 +50,18 @@ fn truncate_for_detail(raw: &str) -> String {
 }
 
 fn parse_variables_f64(tool: &str, json: &str) -> Result<HashMap<String, f64>, String> {
-    serde_json::from_str::<HashMap<String, f64>>(json).map_err(|e| {
+    let map: HashMap<String, f64> = serde_json::from_str(json).map_err(|e| {
         error_with_detail(
             tool,
             ErrorCode::ParseError,
             "variables JSON is malformed",
             &format!("json={}, cause={}", truncate_for_detail(json), e),
         )
-    })
+    })?;
+    for name in map.keys() {
+        reject_reserved_names(tool, name)?;
+    }
+    Ok(map)
 }
 
 /// Parse variables JSON where each value must be a string or number. Returns
@@ -58,6 +80,7 @@ fn parse_variables_string(tool: &str, json: &str) -> Result<HashMap<String, Stri
     };
     let mut out = HashMap::with_capacity(raw.len());
     for (name, value) in raw {
+        reject_reserved_names(tool, &name)?;
         match value {
             Value::String(s) => {
                 out.insert(name, s);
@@ -337,12 +360,29 @@ mod tests {
     #[test]
     fn evaluate_exact_vars_string_value_round_trips() {
         // 25-digit variable that would be lossy through f64 — exact path keeps every digit.
-        let out =
-            evaluate_exact_with_variables("pi * 2", r#"{"pi":"3.1415926535897932384626433"}"#);
+        // Uses `my_pi` rather than `pi` because the constant name is reserved.
+        let out = evaluate_exact_with_variables(
+            "my_pi * 2",
+            r#"{"my_pi":"3.1415926535897932384626433"}"#,
+        );
         assert!(
             out.starts_with("EVALUATE_EXACT_WITH_VARIABLES: OK | RESULT: 6.2831853071795864769"),
             "got: {out}"
         );
+    }
+
+    #[test]
+    fn evaluate_with_variables_rejects_reserved_pi() {
+        let out = evaluate_with_variables("pi * 2", r#"{"pi": 100}"#);
+        assert!(out.starts_with("EVALUATE_WITH_VARIABLES: ERROR"));
+        assert!(out.contains("variable name is reserved"));
+    }
+
+    #[test]
+    fn evaluate_exact_with_variables_rejects_reserved_e() {
+        let out = evaluate_exact_with_variables("e + 1", r#"{"e": "5"}"#);
+        assert!(out.starts_with("EVALUATE_EXACT_WITH_VARIABLES: ERROR"));
+        assert!(out.contains("variable name is reserved"));
     }
 
     #[test]

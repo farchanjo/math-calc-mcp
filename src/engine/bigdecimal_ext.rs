@@ -35,13 +35,36 @@ pub static LN2_RECIPROCAL: LazyLock<BigDecimal> = LazyLock::new(|| {
         .expect("valid 1/ln(2) literal")
 });
 
+/// Digit count beyond which plain notation would spell out hundreds of
+/// trailing zeros; values past this threshold fall back to scientific form.
+/// Matches Java `BigDecimal::toString` behaviour (switches at scale=-6 for
+/// positive exponents, but tools here prefer a larger cap so typical finance
+/// and power-of-ten outputs stay plain).
+const PLAIN_MAX_DIGITS: usize = 40;
+
 /// Strip trailing zeros and render as plain (non-scientific) decimal.
 ///
 /// Matches Java `value.stripTrailingZeros().toPlainString()` except that a pure
 /// integer result is printed without a trailing `.0`.
+///
+/// Zero is always rendered as the literal `"0"`; `BigDecimal` otherwise spells
+/// out `0E100 - 0E100` as 101 literal zeros. Values whose plain form would
+/// exceed [`PLAIN_MAX_DIGITS`] (e.g. `1e100`) fall back to scientific notation
+/// so the response envelope stays compact.
 #[must_use]
 pub fn strip_plain(value: &BigDecimal) -> String {
-    value.normalized().to_plain_string()
+    use num_traits::Zero;
+    if value.is_zero() {
+        return "0".to_string();
+    }
+    let normalized = value.normalized();
+    let plain = normalized.to_plain_string();
+    // `plain.len()` counts the leading `-` and any `.`, but that's good enough
+    // as a size heuristic — we want to bail out well before 100-digit runs.
+    if plain.len() > PLAIN_MAX_DIGITS {
+        return normalized.to_scientific_notation();
+    }
+    plain
 }
 
 /// True iff the value is exactly zero.

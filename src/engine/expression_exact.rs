@@ -274,6 +274,13 @@ fn log10_bd(value: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, Expre
     Ok(bf_to_bd(&out, consts))
 }
 
+fn log2_bd(value: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
+    let bf = bd_to_bf(value, consts);
+    let out = bf.log2(AF_PRECISION, AfRm::ToEven, consts);
+    finite_or_domain(&out, "log2", value)?;
+    Ok(bf_to_bd(&out, consts))
+}
+
 fn sin_bd(degrees: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
     let rad = to_radians(degrees, consts);
     let out = rad.sin(AF_PRECISION, AfRm::ToEven, consts);
@@ -784,7 +791,9 @@ impl<'a, 'c, S: BuildHasher> Parser<'a, 'c, S> {
             "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh" => {
                 self.dispatch_hyperbolic(name, args)
             }
-            "exp" | "log" | "ln" | "log10" | "sqrt" | "cbrt" => self.dispatch_exp_log(name, args),
+            "exp" | "log" | "ln" | "log10" | "log2" | "sqrt" | "cbrt" => {
+                self.dispatch_exp_log(name, args)
+            }
             "abs" | "ceil" | "floor" | "round" | "trunc" | "sign" | "factorial" => {
                 Self::dispatch_round_sign(name, args)
             }
@@ -884,6 +893,10 @@ impl<'a, 'c, S: BuildHasher> Parser<'a, 'c, S> {
             "log10" => {
                 check_arity_bd(args, 1, "log10")?;
                 log10_bd(&args[0], self.consts)
+            }
+            "log2" => {
+                check_arity_bd(args, 1, "log2")?;
+                log2_bd(&args[0], self.consts)
             }
             "sqrt" => {
                 check_arity_bd(args, 1, "sqrt")?;
