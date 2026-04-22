@@ -20,6 +20,12 @@ const TOOL_POWER: &str = "POWER";
 const TOOL_MODULO: &str = "MODULO";
 const TOOL_ABS: &str = "ABS";
 
+// Cap on the estimated printed length (in characters) of a `power` result.
+// Chosen so legitimate arbitrary-precision work is unaffected while rejecting
+// exponents that would blow up the MCP response payload (e.g. 2^1_000_000 is
+// ~301k digits). The upper bound `len(base) * exp` is loose but safe.
+const MAX_POWER_RESULT_LEN: u64 = 10_000;
+
 fn parse_or_error(tool: &str, label: &str, raw: &str) -> Result<BigDecimal, String> {
     BigDecimal::from_str(raw).map_err(|_| {
         error_with_detail(
@@ -113,6 +119,19 @@ pub fn power(base: &str, exponent: &str) -> String {
     // so we short-circuit here to match the accepted convention.
     if exp == 0 {
         return ok_result(TOOL_POWER, "1");
+    }
+    if base_value.is_zero() {
+        return ok_result(TOOL_POWER, "0");
+    }
+    let base_len = base_value.to_plain_string().len() as u64;
+    let estimated_len = base_len.saturating_mul(u64::from(exp));
+    if estimated_len > MAX_POWER_RESULT_LEN {
+        return error_with_detail(
+            TOOL_POWER,
+            ErrorCode::Overflow,
+            "exponent would produce a result that exceeds the maximum output size",
+            &format!("estimated_digits={estimated_len}, max={MAX_POWER_RESULT_LEN}"),
+        );
     }
     ok_result(TOOL_POWER, &base_value.powi(i64::from(exp)).to_plain_string())
 }
@@ -223,6 +242,23 @@ mod tests {
         assert!(
             power("2", "1.5").starts_with("POWER: ERROR\nREASON: [INVALID_INPUT]"),
         );
+    }
+
+    #[test]
+    fn power_rejects_exponent_that_would_exceed_output_cap() {
+        // Regression: 2^1_000_000 previously produced a ~301k-character
+        // payload that blew past MCP client token limits. We now reject any
+        // exponent whose estimated output length exceeds MAX_POWER_RESULT_LEN.
+        let out = power("2", "1000000");
+        assert!(
+            out.starts_with("POWER: ERROR\nREASON: [OVERFLOW]"),
+            "unexpected: {out}"
+        );
+    }
+
+    #[test]
+    fn power_allows_trivial_bases_with_large_exponent() {
+        assert_eq!(power("0", "1000000"), "POWER: OK | RESULT: 0");
     }
 
     #[test]
