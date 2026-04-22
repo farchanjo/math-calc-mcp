@@ -9,7 +9,7 @@ use std::str::FromStr;
 
 use bigdecimal::{BigDecimal, Context, RoundingMode};
 use num_bigint::BigInt;
-use num_traits::{One, Zero};
+use num_traits::{One, Signed, Zero};
 
 use crate::engine::bigdecimal_ext::{DECIMAL128_PRECISION, strip_plain};
 use crate::engine::unit_registry::{UnitCategory, convert as convert_unit, find_unit};
@@ -1071,12 +1071,37 @@ fn compute_tcp_throughput(
         Err(e) => return e,
     };
 
+    if bw.is_zero() || bw.is_negative() {
+        return error_with_detail(
+            TCP_THROUGHPUT,
+            ErrorCode::InvalidInput,
+            "bandwidth must be positive",
+            &format!("bandwidthMbps={bandwidth_mbps}"),
+        );
+    }
+    if window.is_zero() || window.is_negative() {
+        return error_with_detail(
+            TCP_THROUGHPUT,
+            ErrorCode::InvalidInput,
+            "window size must be positive",
+            &format!("windowSizeKb={window_size_kb}"),
+        );
+    }
+
     let bw_bps = mul_ctx(&bw, &million);
     if rtt.is_zero() {
         return error(
             TCP_THROUGHPUT,
             ErrorCode::DivisionByZero,
             "rtt must be greater than zero",
+        );
+    }
+    if rtt.is_negative() {
+        return error_with_detail(
+            TCP_THROUGHPUT,
+            ErrorCode::InvalidInput,
+            "rtt must be positive",
+            &format!("rttMs={rtt_ms}"),
         );
     }
     let rtt_sec = div_scaled(&rtt, &thousand);
@@ -1382,6 +1407,30 @@ mod tests {
         assert_eq!(
             tcp_throughput("10", "10", "1024"),
             "TCP_THROUGHPUT: OK | RATE_MBPS: 10"
+        );
+    }
+
+    #[test]
+    fn tcp_throughput_rejects_negative_bandwidth() {
+        assert_eq!(
+            tcp_throughput("-100", "50", "64"),
+            "TCP_THROUGHPUT: ERROR\nREASON: [INVALID_INPUT] bandwidth must be positive\nDETAIL: bandwidthMbps=-100"
+        );
+    }
+
+    #[test]
+    fn tcp_throughput_rejects_zero_window() {
+        assert_eq!(
+            tcp_throughput("100", "50", "0"),
+            "TCP_THROUGHPUT: ERROR\nREASON: [INVALID_INPUT] window size must be positive\nDETAIL: windowSizeKb=0"
+        );
+    }
+
+    #[test]
+    fn tcp_throughput_rejects_negative_rtt() {
+        assert_eq!(
+            tcp_throughput("100", "-10", "64"),
+            "TCP_THROUGHPUT: ERROR\nREASON: [INVALID_INPUT] rtt must be positive\nDETAIL: rttMs=-10"
         );
     }
 
