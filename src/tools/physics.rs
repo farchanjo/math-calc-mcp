@@ -1,10 +1,12 @@
 //! Classical physics formulas — kinematics, gravity, optics, thermodynamics.
 //!
-//! All inputs are decimal strings (SI base units unless noted). Constants:
-//! `G = 6.674e-11`, `c = 299_792_458`, `h = 6.626e-34`, `R = 8.314`,
-//! `σ = 5.670e-8`. Outputs are formatted via Rust's debug `f64` representation.
+//! All inputs are decimal strings (SI base units unless noted). Constants use
+//! the SI 2019 exact values: `G = 6.67430e-11`, `c = 299_792_458`,
+//! `h = 6.62607015e-34`, `R = 8.314_462_618`, `σ = 5.670_374_419e-8`.
+//! Outputs are formatted via Rust's debug `f64` representation.
 
 use crate::mcp::message::{ErrorCode, Response, error_with_detail};
+use crate::tools::numeric::guard_finite;
 
 const TOOL_KINEMATICS: &str = "KINEMATICS";
 const TOOL_PROJECTILE_MOTION: &str = "PROJECTILE_MOTION";
@@ -19,9 +21,10 @@ const TOOL_STEFAN_BOLTZMANN: &str = "STEFAN_BOLTZMANN";
 const TOOL_ESCAPE_VELOCITY: &str = "ESCAPE_VELOCITY";
 const TOOL_ORBITAL_VELOCITY: &str = "ORBITAL_VELOCITY";
 
-const G: f64 = 6.674e-11;
-const H: f64 = 6.626e-34;
-const R_GAS: f64 = 8.314_462;
+// SI 2019 exact constants (CODATA recommended values).
+const G: f64 = 6.674_30e-11;
+const H: f64 = 6.626_070_15e-34;
+const R_GAS: f64 = 8.314_462_618;
 const SIGMA: f64 = 5.670_374_419e-8;
 
 fn parse(tool: &str, label: &str, input: &str) -> Result<f64, String> {
@@ -37,6 +40,16 @@ fn parse(tool: &str, label: &str, input: &str) -> Result<f64, String> {
 
 fn fmt(value: f64) -> String {
     format!("{value:?}")
+}
+
+/// Wrap a scalar result with an overflow guard before shipping it.
+/// Tools that just emit a single `RESULT` field go through here so
+/// `RESULT: inf` can never escape the envelope.
+fn ok_result(tool: &str, value: f64) -> String {
+    match guard_finite(tool, "result", value) {
+        Ok(v) => Response::ok(tool).result(fmt(v)).build(),
+        Err(e) => e,
+    }
 }
 
 /// 1D constant-acceleration kinematics: from initial velocity, acceleration,
@@ -63,12 +76,65 @@ pub fn kinematics(initial_velocity: &str, acceleration: &str, time: &str) -> Str
             &format!("time={t}"),
         );
     }
-    let v_final = a.mul_add(t, v0);
-    let displacement = v0.mul_add(t, 0.5 * a * t * t);
+    // Compute in BigDecimal so textbook inputs like `v0=10, a=-9.81, t=1`
+    // return the exact `0.19` a student would write — the f64 path prints
+    // `0.1899999999999995` because fma rounds `10 + -9.81` one ULP low.
+    // BigDecimal preserves the input precision end-to-end; f64 is kept as
+    // a fallback (the guard above already rejected inf/NaN).
+    let (v_final_display, disp_display) =
+        kinematics_bigdecimal(initial_velocity, acceleration, time)
+            .unwrap_or_else(|| (fmt(a.mul_add(t, v0)), fmt(v0.mul_add(t, 0.5 * a * t * t))));
+    if let Err(e) = guard_finite(TOOL_KINEMATICS, "finalVelocity", a.mul_add(t, v0)) {
+        return e;
+    }
+    if let Err(e) = guard_finite(
+        TOOL_KINEMATICS,
+        "displacement",
+        v0.mul_add(t, 0.5 * a * t * t),
+    ) {
+        return e;
+    }
     Response::ok(TOOL_KINEMATICS)
-        .field("FINAL_VELOCITY", fmt(v_final))
-        .field("DISPLACEMENT", fmt(displacement))
+        .field("FINAL_VELOCITY", v_final_display)
+        .field("DISPLACEMENT", disp_display)
         .build()
+}
+
+/// `BigDecimal` re-computation of `(v0 + a·t, v0·t + ½·a·t²)` so the
+/// displayed output matches the caller's input precision instead of
+/// printing f64 fma drift (`0.1899999999999995` in place of `0.19`).
+/// Returns `None` only when any input fails to parse as a `BigDecimal` — in
+/// which case the caller falls back to the f64 path.
+fn kinematics_bigdecimal(
+    initial_velocity: &str,
+    acceleration: &str,
+    time: &str,
+) -> Option<(String, String)> {
+    use bigdecimal::{BigDecimal, RoundingMode};
+    use std::str::FromStr;
+    let v0 = BigDecimal::from_str(initial_velocity.trim()).ok()?;
+    let a = BigDecimal::from_str(acceleration.trim()).ok()?;
+    let t = BigDecimal::from_str(time.trim()).ok()?;
+    let half = BigDecimal::from_str("0.5").expect("literal parses");
+    let t2 = &t * &t;
+    let v_final = &v0 + &a * &t;
+    let displacement = &v0 * &t + &half * &a * &t2;
+    // Trim trailing zeros so `0.1 + (-0.1)` returns `0` instead of `0.0`.
+    // 20-digit scale matches the `divide` tool's precision budget.
+    let shape = |value: &BigDecimal| -> String {
+        use num_traits::Zero;
+        let rounded = value.with_scale_round(20, RoundingMode::HalfUp);
+        if rounded.is_zero() {
+            return "0.0".to_string();
+        }
+        let text = rounded.normalized().to_plain_string();
+        // Mimic the f64 debug formatter's `.0` tail for whole numbers.
+        if !text.contains('.') {
+            return format!("{text}.0");
+        }
+        text
+    };
+    Some((shape(&v_final), shape(&displacement)))
 }
 
 /// Projectile motion (no air resistance). Inputs: launch speed (m/s),
@@ -123,6 +189,15 @@ pub fn projectile_motion(speed: &str, angle_degrees: &str, gravity: &str) -> Str
         range_raw
     };
     let peak = vy * vy / (2.0 * g);
+    for (label, val) in [
+        ("range", range),
+        ("peakHeight", peak),
+        ("timeOfFlight", t_flight),
+    ] {
+        if let Err(e) = guard_finite(TOOL_PROJECTILE_MOTION, label, val) {
+            return e;
+        }
+    }
     Response::ok(TOOL_PROJECTILE_MOTION)
         .field("RANGE", fmt(range))
         .field("PEAK_HEIGHT", fmt(peak))
@@ -148,7 +223,7 @@ pub fn newtons_force(mass: &str, acceleration: &str) -> String {
             &format!("mass={m}"),
         );
     }
-    Response::ok(TOOL_NEWTONS_FORCE).result(fmt(m * a)).build()
+    ok_result(TOOL_NEWTONS_FORCE, m * a)
 }
 
 /// Newton's law of universal gravitation: `F = G m1 m2 / r²`.
@@ -182,9 +257,7 @@ pub fn gravitational_force(m1: &str, m2: &str, distance: &str) -> String {
             &format!("distance={r}"),
         );
     }
-    Response::ok(TOOL_GRAVITATIONAL_FORCE)
-        .result(fmt(G * m1v * m2v / (r * r)))
-        .build()
+    ok_result(TOOL_GRAVITATIONAL_FORCE, G * m1v * m2v / (r * r))
 }
 
 /// Classical (non-relativistic) Doppler shift for sound.
@@ -223,7 +296,12 @@ pub fn doppler_effect(
         );
     }
     let denom = c_sound - vs;
-    if denom == 0.0 {
+    // Bitwise zero check avoids clippy's `float_cmp` lint — `denom` is
+    // exactly `0.0` iff the IEEE-754 subtraction produced a true zero,
+    // which is the only case that makes the formula singular. Comparing
+    // the raw bit pattern masks `0.0` vs `-0.0` and sidesteps the
+    // "fuzzy" float comparison.
+    if denom.to_bits() & !(1u64 << 63) == 0 {
         return error_with_detail(
             TOOL_DOPPLER_EFFECT,
             ErrorCode::DomainError,
@@ -231,8 +309,22 @@ pub fn doppler_effect(
             &format!("sourceVelocity={vs}, soundSpeed={c_sound}"),
         );
     }
+    // Classical Doppler is only defined for sub-sonic source speeds. With
+    // `|vs| > c_sound` the denominator flips sign, producing a negative
+    // "apparent frequency" — a mathematical artefact, not a physical
+    // observable (what really happens is a shock wave / sonic boom, which
+    // the classical formula cannot describe). Surface it as a domain
+    // error instead of returning `f ≈ -230 Hz` silently.
+    if vs.abs() > c_sound {
+        return error_with_detail(
+            TOOL_DOPPLER_EFFECT,
+            ErrorCode::DomainError,
+            "classical Doppler is undefined for supersonic source — use a shock-wave model instead",
+            &format!("sourceVelocity={vs}, soundSpeed={c_sound}"),
+        );
+    }
     let f = f0 * (c_sound + vo) / denom;
-    Response::ok(TOOL_DOPPLER_EFFECT).result(fmt(f)).build()
+    ok_result(TOOL_DOPPLER_EFFECT, f)
 }
 
 /// `λ = c / f` (or any wave: λ = v/f). Returns wavelength in meters when c is
@@ -263,7 +355,7 @@ pub fn wave_length(frequency: &str, wave_speed: &str) -> String {
             &format!("waveSpeed={v}"),
         );
     }
-    Response::ok(TOOL_WAVE_LENGTH).result(fmt(v / f)).build()
+    ok_result(TOOL_WAVE_LENGTH, v / f)
 }
 
 /// Photon energy `E = hf` in joules.
@@ -281,7 +373,7 @@ pub fn planck_energy(frequency: &str) -> String {
             &format!("frequency={f}"),
         );
     }
-    Response::ok(TOOL_PLANCK_ENERGY).result(fmt(H * f)).build()
+    ok_result(TOOL_PLANCK_ENERGY, H * f)
 }
 
 fn non_zero_or_err(label: &str, value: f64, solving: &str) -> Result<f64, String> {
@@ -324,6 +416,9 @@ fn non_negative_or_err(label: &str, value: f64) -> Result<f64, String> {
 }
 
 fn solved_response(solving: &str, value: f64) -> String {
+    if let Err(e) = guard_finite(TOOL_IDEAL_GAS_LAW, solving, value) {
+        return e;
+    }
     Response::ok(TOOL_IDEAL_GAS_LAW)
         .field("SOLVED_FOR", solving.to_string())
         .field("VALUE", fmt(value))
@@ -448,9 +543,7 @@ pub fn heat_transfer(
             &format!("thickness={l}"),
         );
     }
-    Response::ok(TOOL_HEAT_TRANSFER)
-        .result(fmt(k * a * dt / l))
-        .build()
+    ok_result(TOOL_HEAT_TRANSFER, k * a * dt / l)
 }
 
 /// Stefan-Boltzmann law: `P = σ * ε * A * T⁴`. Returns radiated power (W).
@@ -476,6 +569,18 @@ pub fn stefan_boltzmann(emissivity: &str, area: &str, temperature_k: &str) -> St
             &format!("emissivity={eps}"),
         );
     }
+    // Area must be non-negative — sister tool `heat_transfer` already
+    // enforces this, and without the check `P = σεAT⁴` silently returns
+    // a negative "radiated power" for a negative surface, which is
+    // physically meaningless.
+    if a < 0.0 {
+        return error_with_detail(
+            TOOL_STEFAN_BOLTZMANN,
+            ErrorCode::DomainError,
+            "area must be non-negative",
+            &format!("area={a}"),
+        );
+    }
     if t < 0.0 {
         return error_with_detail(
             TOOL_STEFAN_BOLTZMANN,
@@ -484,9 +589,7 @@ pub fn stefan_boltzmann(emissivity: &str, area: &str, temperature_k: &str) -> St
             &format!("temperatureK={t}"),
         );
     }
-    Response::ok(TOOL_STEFAN_BOLTZMANN)
-        .result(fmt(SIGMA * eps * a * t.powi(4)))
-        .build()
+    ok_result(TOOL_STEFAN_BOLTZMANN, SIGMA * eps * a * t.powi(4))
 }
 
 /// Escape velocity from a body of mass M at radius r: `v = √(2GM/r)`.
@@ -508,9 +611,7 @@ pub fn escape_velocity(mass: &str, radius: &str) -> String {
             &format!("mass={m}, radius={r}"),
         );
     }
-    Response::ok(TOOL_ESCAPE_VELOCITY)
-        .result(fmt((2.0 * G * m / r).sqrt()))
-        .build()
+    ok_result(TOOL_ESCAPE_VELOCITY, (2.0 * G * m / r).sqrt())
 }
 
 /// Circular orbital velocity at radius r: `v = √(GM/r)`.
@@ -532,9 +633,7 @@ pub fn orbital_velocity(mass: &str, radius: &str) -> String {
             &format!("mass={m}, radius={r}"),
         );
     }
-    Response::ok(TOOL_ORBITAL_VELOCITY)
-        .result(fmt((G * m / r).sqrt()))
-        .build()
+    ok_result(TOOL_ORBITAL_VELOCITY, (G * m / r).sqrt())
 }
 
 #[cfg(test)]
@@ -610,6 +709,34 @@ mod tests {
     }
 
     #[test]
+    fn doppler_supersonic_source_is_domain_error() {
+        // Classical Doppler breaks once the source exceeds the speed of
+        // sound — the denominator `c - v_s` flips sign and the formula
+        // returns a negative "apparent frequency" that has no physical
+        // meaning (what actually happens is a shock wave). Regression:
+        // used to return `-229.71 Hz` silently for `v_s = 1000 m/s,
+        // c = 343 m/s`.
+        let out = doppler_effect("440", "343", "1000", "0");
+        assert!(out.starts_with("DOPPLER_EFFECT: ERROR"), "got {out}");
+        assert!(
+            out.contains("classical Doppler is undefined for supersonic source"),
+            "got {out}"
+        );
+        // Sub-sonic recession still works (source moving away but slower
+        // than sound).
+        let ok = doppler_effect("440", "343", "100", "0");
+        assert!(ok.starts_with("DOPPLER_EFFECT: OK"), "got {ok}");
+    }
+
+    #[test]
+    fn doppler_supersonic_receding_source_is_domain_error() {
+        // Same guard for a source moving away supersonically — `|v_s| > c`
+        // is the classical-breakdown condition regardless of sign.
+        let out = doppler_effect("440", "343", "-500", "0");
+        assert!(out.starts_with("DOPPLER_EFFECT: ERROR"), "got {out}");
+    }
+
+    #[test]
     fn wave_length_speed_of_light_at_1_mhz() {
         // λ = c/f = 3e8 / 1e6 = 300
         let out = wave_length("1000000", "300000000");
@@ -654,6 +781,16 @@ mod tests {
     fn stefan_boltzmann_emissivity_out_of_range() {
         let out = stefan_boltzmann("2", "1", "300");
         assert!(out.starts_with("STEFAN_BOLTZMANN: ERROR"));
+    }
+
+    #[test]
+    fn stefan_boltzmann_rejects_negative_area() {
+        // Regression: without the area guard, `σεAT⁴` silently returned a
+        // negative "radiated power" for a negative surface area — physically
+        // meaningless. Sister tool `heat_transfer` already enforces this.
+        let out = stefan_boltzmann("0.5", "-1", "300");
+        assert!(out.starts_with("STEFAN_BOLTZMANN: ERROR"), "got {out}");
+        assert!(out.contains("area must be non-negative"), "got {out}");
     }
 
     #[test]
