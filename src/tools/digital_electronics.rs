@@ -315,9 +315,38 @@ fn parse_bitwise_operand(raw: &str) -> Option<BigInt> {
     Some(if negative { -magnitude } else { magnitude })
 }
 
-fn parse_shift_amount(raw: &str) -> Option<u32> {
-    let value = parse_bitwise_operand(raw)?;
-    u32::try_from(value).ok()
+/// Resolve a shift amount into a `u32`. A present-but-invalid value (negative,
+/// or wider than `u32::MAX`) is a different class of mistake than a parse
+/// failure, so the caller can surface the right envelope.
+enum ShiftResolve {
+    Ok(u32),
+    Unparseable,
+    OutOfRange(BigInt),
+}
+
+fn resolve_shift_amount(raw: &str) -> ShiftResolve {
+    let Some(value) = parse_bitwise_operand(raw) else {
+        return ShiftResolve::Unparseable;
+    };
+    u32::try_from(&value).map_or(ShiftResolve::OutOfRange(value), ShiftResolve::Ok)
+}
+
+fn apply_shift(val_a: &BigInt, raw_b: &str, op_name: &str, left: bool) -> Result<BigInt, String> {
+    match resolve_shift_amount(raw_b) {
+        ShiftResolve::Ok(shift) => Ok(if left { val_a << shift } else { val_a >> shift }),
+        ShiftResolve::Unparseable => Err(error_with_detail(
+            BITWISE_OP,
+            ErrorCode::ParseError,
+            "operand B is not a valid integer",
+            &format!("b={raw_b}"),
+        )),
+        ShiftResolve::OutOfRange(shift) => Err(error_with_detail(
+            BITWISE_OP,
+            ErrorCode::OutOfRange,
+            &format!("{op_name} shift amount must be a non-negative u32"),
+            &format!("b={shift}, min=0, max={}", u32::MAX),
+        )),
+    }
 }
 
 /// Bitwise AND/OR/XOR/NOT/SHL/SHR. Returns the decimal result.
@@ -332,13 +361,19 @@ pub fn bitwise_op(a: &str, b: &str, operation: &str) -> String {
         );
     };
     let op = operation.to_ascii_uppercase();
-    let computed: Option<BigInt> = match op.as_str() {
-        "AND" => parse_bitwise_operand(b).map(|vb| &val_a & &vb),
-        "OR" => parse_bitwise_operand(b).map(|vb| &val_a | &vb),
-        "XOR" => parse_bitwise_operand(b).map(|vb| &val_a ^ &vb),
-        "NOT" => Some(!val_a),
-        "SHL" => parse_shift_amount(b).map(|shift| &val_a << shift),
-        "SHR" => parse_shift_amount(b).map(|shift| &val_a >> shift),
+    let computed: Result<BigInt, String> = match op.as_str() {
+        "AND" => parse_bitwise_operand(b)
+            .map(|vb| &val_a & &vb)
+            .ok_or_else(|| invalid_operand_b_error(b)),
+        "OR" => parse_bitwise_operand(b)
+            .map(|vb| &val_a | &vb)
+            .ok_or_else(|| invalid_operand_b_error(b)),
+        "XOR" => parse_bitwise_operand(b)
+            .map(|vb| &val_a ^ &vb)
+            .ok_or_else(|| invalid_operand_b_error(b)),
+        "NOT" => Ok(!val_a),
+        "SHL" => apply_shift(&val_a, b, "SHL", true),
+        "SHR" => apply_shift(&val_a, b, "SHR", false),
         _ => {
             return error_with_detail(
                 BITWISE_OP,
@@ -348,16 +383,18 @@ pub fn bitwise_op(a: &str, b: &str, operation: &str) -> String {
             );
         }
     };
-    computed.map_or_else(
-        || {
-            error_with_detail(
-                BITWISE_OP,
-                ErrorCode::ParseError,
-                "operand B is not a valid integer",
-                &format!("b={b}"),
-            )
-        },
-        |value| Response::ok(BITWISE_OP).result(value.to_string()).build(),
+    match computed {
+        Ok(value) => Response::ok(BITWISE_OP).result(value.to_string()).build(),
+        Err(msg) => msg,
+    }
+}
+
+fn invalid_operand_b_error(raw: &str) -> String {
+    error_with_detail(
+        BITWISE_OP,
+        ErrorCode::ParseError,
+        "operand B is not a valid integer",
+        &format!("b={raw}"),
     )
 }
 
@@ -849,6 +886,36 @@ mod tests {
             bitwise_op("1", "0b", "AND"),
             "BITWISE_OP: ERROR\nREASON: [PARSE_ERROR] operand B is not a valid integer\nDETAIL: b=0b"
         );
+    }
+
+    #[test]
+    fn bitwise_shift_negative_is_out_of_range() {
+        // `-5` is a perfectly valid integer — it just isn't a valid shift
+        // amount. OUT_OF_RANGE is the honest classification; the old code
+        // mis-reported it as PARSE_ERROR.
+        let out = bitwise_op("1", "-5", "SHL");
+        assert!(out.starts_with("BITWISE_OP: ERROR"), "got: {out}");
+        assert!(out.contains("OUT_OF_RANGE"), "got: {out}");
+        assert!(out.contains("shift amount"));
+        assert!(out.contains("b=-5"));
+    }
+
+    #[test]
+    fn bitwise_shift_beyond_u32_is_out_of_range() {
+        // 2^32 is a valid BigInt — it just doesn't fit in a u32 shift.
+        let out = bitwise_op("1", "4294967296", "SHR");
+        assert!(out.starts_with("BITWISE_OP: ERROR"), "got: {out}");
+        assert!(out.contains("OUT_OF_RANGE"));
+        assert!(out.contains("b=4294967296"));
+    }
+
+    #[test]
+    fn bitwise_shift_unparseable_still_parse_error() {
+        // A genuine parse failure must keep reporting PARSE_ERROR so callers
+        // can tell "value is malformed" from "value is out of range".
+        let out = bitwise_op("1", "nope", "SHL");
+        assert!(out.starts_with("BITWISE_OP: ERROR"));
+        assert!(out.contains("PARSE_ERROR"));
     }
 
     #[test]
