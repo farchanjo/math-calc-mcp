@@ -84,9 +84,72 @@ static ATOMIC_WEIGHTS: LazyLock<HashMap<&'static str, f64>> = LazyLock::new(|| {
         ("Pt", 195.084),
         ("Au", 196.966_569),
         ("Hg", 200.592),
+        ("Tl", 204.38),
         ("Pb", 207.2),
         ("Bi", 208.980_40),
+        ("Po", 209.0),
+        ("At", 210.0),
+        ("Rn", 222.0),
+        ("Fr", 223.0),
+        ("Ra", 226.0),
+        ("Ac", 227.0),
+        ("Th", 232.037_7),
+        ("Pa", 231.035_88),
         ("U", 238.028_91),
+        ("Np", 237.0),
+        ("Pu", 244.0),
+        ("Am", 243.0),
+        ("Cm", 247.0),
+        ("Bk", 247.0),
+        ("Cf", 251.0),
+        ("Es", 252.0),
+        ("Fm", 257.0),
+        ("Md", 258.0),
+        ("No", 259.0),
+        ("Lr", 266.0),
+        ("Rf", 267.0),
+        ("Db", 268.0),
+        ("Sg", 269.0),
+        ("Bh", 270.0),
+        ("Hs", 269.0),
+        ("Mt", 278.0),
+        ("Ds", 281.0),
+        ("Rg", 282.0),
+        ("Cn", 285.0),
+        // IUPAC 2016 names for elements 113–118 (formerly Uut, Uup, Uus, Uuo).
+        ("Nh", 286.0),
+        ("Fl", 289.0),
+        ("Mc", 289.0),
+        ("Lv", 293.0),
+        ("Ts", 294.0),
+        ("Og", 294.0),
+        // Lanthanides (previously absent — common in materials chemistry).
+        ("La", 138.905_47),
+        ("Ce", 140.116),
+        ("Pr", 140.907_66),
+        ("Nd", 144.242),
+        ("Pm", 145.0),
+        ("Sm", 150.36),
+        ("Eu", 151.964),
+        ("Gd", 157.25),
+        ("Tb", 158.925_35),
+        ("Dy", 162.500),
+        ("Ho", 164.930_33),
+        ("Er", 167.259),
+        ("Tm", 168.934_22),
+        ("Yb", 173.045),
+        ("Lu", 174.9668),
+        // Post-Cs transition metals (Hf, Ta, W, Re, Os, Ir) — also missing.
+        ("Hf", 178.486),
+        ("Ta", 180.947_88),
+        ("W", 183.84),
+        ("Re", 186.207),
+        ("Os", 190.23),
+        ("Ir", 192.217),
+        ("Pd", 106.42),
+        ("Rh", 102.905_50),
+        ("Ru", 101.07),
+        ("Tc", 98.0),
     ];
     for (k, v) in pairs {
         m.insert(*k, *v);
@@ -635,6 +698,34 @@ mod tests {
         assert!(out.starts_with("MOLAR_MASS: OK"), "got: {out}");
         assert!(out.contains("O9="));
         assert!(out.contains("H10="));
+    }
+
+    #[test]
+    fn molar_mass_iupac_superheavy_elements() {
+        // Elements 113–118 (Nh/Fl/Mc/Lv/Ts/Og) were absent from the table —
+        // callers doing nuclear-chemistry lookups hit UNKNOWN_VARIABLE.
+        for symbol in ["Nh", "Fl", "Mc", "Lv", "Ts", "Og"] {
+            let out = molar_mass(symbol);
+            assert!(out.starts_with("MOLAR_MASS: OK"), "{symbol}: {out}");
+        }
+    }
+
+    #[test]
+    fn molar_mass_lanthanide_compound() {
+        // Gadolinium oxide — commonly used in MRI contrast agents.
+        let out = molar_mass("Gd2O3");
+        assert!(out.starts_with("MOLAR_MASS: OK"), "got: {out}");
+        assert!(out.contains("Gd2="));
+        assert!(out.contains("O3="));
+    }
+
+    #[test]
+    fn molar_mass_tungsten_alloy() {
+        // Tungsten + Rhenium alloys used in thermocouples; both new.
+        let out = molar_mass("WRe");
+        assert!(out.starts_with("MOLAR_MASS: OK"), "got: {out}");
+        assert!(out.contains("W1="));
+        assert!(out.contains("Re1="));
     }
 
     #[test]
