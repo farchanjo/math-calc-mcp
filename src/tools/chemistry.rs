@@ -181,19 +181,57 @@ fn parse_count(chars: &[char], pos: &mut usize) -> u32 {
     token.parse::<u32>().unwrap_or(1)
 }
 
+/// Title-case element symbols: uppercase every letter that starts a run after
+/// a non-letter (start-of-string, `(`/`)`, digit). Keeps any already-capital
+/// letter. Lets `h2o` become `H2O` and `ca(oh)2` → `Ca(Oh)2` without touching
+/// the happy path (the normalised string is only tried as a retry).
+fn title_case_formula(formula: &str) -> String {
+    let mut out = String::with_capacity(formula.len());
+    let mut prev_was_letter = false;
+    for ch in formula.chars() {
+        if ch.is_ascii_alphabetic() {
+            if prev_was_letter {
+                out.push(ch);
+            } else {
+                out.push(ch.to_ascii_uppercase());
+            }
+            prev_was_letter = true;
+        } else {
+            out.push(ch);
+            prev_was_letter = false;
+        }
+    }
+    out
+}
+
 #[must_use]
 pub fn molar_mass(formula: &str) -> String {
-    let counts = match parse_formula(formula.trim()) {
+    let trimmed = formula.trim();
+    let counts = match parse_formula(trimmed) {
         Ok(c) => c,
-        Err(e) => {
+        Err(first_err) => {
+            // Retry with canonical element casing so callers can type `h2o`
+            // or `fe2(so4)3` and still get a match; only elements whose
+            // symbols need letter-2 uppercase (e.g. `CO` vs `Co`) stay
+            // ambiguous and surface the original error.
+            let retried = title_case_formula(trimmed);
+            if retried != trimmed
+                && let Ok(c) = parse_formula(&retried)
+            {
+                return render_molar_mass(&retried, &c);
+            }
             return error_with_detail(
                 TOOL_MOLAR_MASS,
                 ErrorCode::ParseError,
                 "invalid chemical formula",
-                &format!("formula={formula}, error={e}"),
+                &format!("formula={formula}, error={first_err}"),
             );
         }
     };
+    render_molar_mass(trimmed, &counts)
+}
+
+fn render_molar_mass(formula: &str, counts: &HashMap<String, u32>) -> String {
     if counts.is_empty() {
         return error_with_detail(
             TOOL_MOLAR_MASS,
@@ -204,7 +242,7 @@ pub fn molar_mass(formula: &str) -> String {
     }
     let mut total = 0.0;
     let mut breakdown: Vec<(String, u32, f64)> = Vec::new();
-    for (element, n) in &counts {
+    for (element, n) in counts {
         let weight = match ATOMIC_WEIGHTS.get(element.as_str()) {
             Some(w) => *w,
             None => {
@@ -227,7 +265,7 @@ pub fn molar_mass(formula: &str) -> String {
         .collect::<Vec<_>>()
         .join(",");
     Response::ok(TOOL_MOLAR_MASS)
-        .field("FORMULA", formula.trim())
+        .field("FORMULA", formula)
         .field("MOLAR_MASS_G_MOL", fmt(total))
         .field("BREAKDOWN", parts)
         .build()
@@ -500,6 +538,33 @@ mod tests {
     fn molar_mass_invalid_syntax_errors() {
         let out = molar_mass("(H2");
         assert!(out.starts_with("MOLAR_MASS: ERROR"));
+    }
+
+    #[test]
+    fn molar_mass_lowercase_formula_is_title_cased() {
+        // `h2o` is retried as `H2O` after the first parse fails.
+        let out = molar_mass("h2o");
+        assert!(out.starts_with("MOLAR_MASS: OK"));
+        assert!(out.contains("FORMULA: H2O"));
+        assert!(out.contains("H2=2.016"));
+    }
+
+    #[test]
+    fn molar_mass_retry_preserves_two_letter_elements() {
+        // `fe2(so4)3` → `Fe2(So4)3` still fails (So is not an element), so
+        // the original error is surfaced — retry is best-effort, not magical.
+        let out = molar_mass("fe2(so4)3");
+        assert!(
+            out.starts_with("MOLAR_MASS: ERROR"),
+            "expected error, got: {out}"
+        );
+    }
+
+    #[test]
+    fn molar_mass_title_case_helper() {
+        assert_eq!(title_case_formula("h2o"), "H2O");
+        assert_eq!(title_case_formula("ca(oh)2"), "Ca(Oh)2");
+        assert_eq!(title_case_formula("H2O"), "H2O");
     }
 
     #[test]
