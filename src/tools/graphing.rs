@@ -20,28 +20,49 @@ const TOOL_FIND_ROOTS: &str = "FIND_ROOTS";
 
 const MAX_NEWTON_ITERS: i32 = 1000;
 const NEWTON_TOLERANCE: f64 = 1e-12;
+/// After the bisect converges on a bracketed sign change, accept the midpoint
+/// as a root only if `|f(x)|` falls below this tolerance. Asymptotes
+/// (`tan_r(x)` near π/2, `1/(x-a)` with no domain guard) also produce a sign
+/// change across their bracket but the refined `|f(x)|` stays huge — that
+/// validation rejects them. `1e-4` is forgiving enough to accept roots whose
+/// slope at the root is shallow, strict enough to rule out any real
+/// discontinuity observed in f64 arithmetic.
+const ROOT_VALIDATION_TOLERANCE: f64 = 1e-4;
 const DERIVATIVE_STEP: f64 = 1e-8;
 const BISECT_ITERS: i32 = 50;
 const SCAN_DIVISIONS: i32 = 1000;
 
-/// Map an [`ExpressionError`] into the canonical envelope — delegates to the
-/// shared helper so REASON text and DETAIL shape stay consistent.
-fn map_expression_error(tool: &str, err: &ExpressionError) -> String {
+/// Map an [`ExpressionError`] into the canonical envelope, rewriting
+/// `UnknownVariable` when the offending name differs from the declared
+/// `variable` so callers can tell at a glance whether they mistyped the
+/// declared variable or the expression.
+fn map_expression_error(tool: &str, err: &ExpressionError, declared: &str) -> String {
+    if let ExpressionError::UnknownVariable(name) = err
+        && name != declared
+    {
+        return error_with_detail(
+            tool,
+            ErrorCode::UnknownVariable,
+            "expression references a name that is not the declared variable",
+            &format!("found={name}, declared={declared}"),
+        );
+    }
     expression_error_envelope(tool, err)
 }
 
 fn eval_at(tool: &str, expression: &str, variable: &str, x: f64) -> Result<f64, String> {
     let mut vars = HashMap::with_capacity(1);
     vars.insert(variable.to_string(), x);
-    evaluate_with_variables(expression, &vars).map_err(|e| map_expression_error(tool, &e))
+    evaluate_with_variables(expression, &vars).map_err(|e| map_expression_error(tool, &e, variable))
 }
 
 /// Outcome of a single-point evaluation used by plot/find-roots.
 ///
 /// * `Value(y)` — finite, in-domain sample.
 /// * `Undefined` — pole (`1/0`), domain excursion (`log(-1)`), or non-finite
-///   result. Surfaces as `y = NaN` in plots and a continuity break in root
-///   scans, instead of aborting the whole response.
+///   result. Surfaces as `y=undefined` in plots and a continuity break in root
+///   scans, instead of aborting the whole response or leaking a raw `NaN` that
+///   numeric consumers cannot parse.
 enum SampleKind {
     Value(f64),
     Undefined,
@@ -79,6 +100,14 @@ fn plot_finite_decimal(tool: &str, label: &str, value: f64) -> Result<BigDecimal
     })
 }
 
+/// A single plot sample: either a finite `(x, y)` pair or a singularity marker
+/// at `x`. `Undefined` samples render as `y=undefined` so consumers can parse
+/// numeric rows uniformly without special-casing a raw `NaN` token.
+enum PlotSample {
+    Value(f64, f64),
+    Undefined(f64),
+}
+
 fn sample_plot(
     tool: &str,
     expression: &str,
@@ -86,23 +115,23 @@ fn sample_plot(
     min: f64,
     max: f64,
     steps: i32,
-) -> Result<Vec<(f64, f64)>, String> {
+) -> Result<Vec<PlotSample>, String> {
     let bd_min = plot_finite_decimal(tool, "min", min)?;
     let bd_max = plot_finite_decimal(tool, "max", max)?;
     let step_size = (&bd_max - &bd_min).with_prec(DECIMAL128_PRECISION) / BigDecimal::from(steps);
     let capacity = usize::try_from(steps).unwrap_or(0).saturating_add(1);
-    let mut rows: Vec<(f64, f64)> = Vec::with_capacity(capacity);
+    let mut rows: Vec<PlotSample> = Vec::with_capacity(capacity);
     for idx in 0..=steps {
         let x_bd = &bd_min + &step_size * BigDecimal::from(idx);
         let x = x_bd.to_f64().unwrap_or(f64::NAN);
-        let y = match try_sample(expression, variable, x) {
-            Ok(SampleKind::Value(v)) => v,
+        let sample = match try_sample(expression, variable, x) {
+            Ok(SampleKind::Value(v)) => PlotSample::Value(x, v),
             // Pointwise singularity (e.g. `1/x` at x=0, `log(x)` at x<=0):
-            // emit NaN instead of aborting the entire plot.
-            Ok(SampleKind::Undefined) => f64::NAN,
-            Err(e) => return Err(map_expression_error(tool, &e)),
+            // mark the sample as undefined; consumers see `y=undefined`.
+            Ok(SampleKind::Undefined) => PlotSample::Undefined(x),
+            Err(e) => return Err(map_expression_error(tool, &e, variable)),
         };
-        rows.push((x, y));
+        rows.push(sample);
     }
     Ok(rows)
 }
@@ -135,9 +164,12 @@ pub fn plot_function(expression: &str, variable: &str, min: f64, max: f64, steps
         .field("STEPS", steps.to_string())
         .field("MIN", format!("{min:?}"))
         .field("MAX", format!("{max:?}"));
-    for (idx, (x, y)) in rows.into_iter().enumerate() {
+    for (idx, sample) in rows.into_iter().enumerate() {
         let key = format!("ROW_{}", idx + 1);
-        let value = format!("x={x:?} | y={y:?}");
+        let value = match sample {
+            PlotSample::Value(x, y) => format!("x={x:?} | y={y:?}"),
+            PlotSample::Undefined(x) => format!("x={x:?} | y=undefined"),
+        };
         builder = builder.field(key, value);
     }
     builder.block().build()
@@ -195,6 +227,28 @@ pub fn solve_equation(expression: &str, variable: &str, initial_guess: f64) -> S
 //  find_roots (scan + bisect)
 // --------------------------------------------------------------------------- //
 
+/// Refine a bracketed sign change into a confirmed root.
+///
+/// Returns `Ok(Some(root))` when bisect converges and `|f(root)|` really is
+/// small, `Ok(None)` when the bracket straddled a vertical asymptote (e.g.
+/// `tan_r(x)` near π/2 flips from +∞ to −∞ via a huge finite f64), or
+/// `Err(envelope)` on evaluator failure.
+fn refine_bracketed_root(
+    tool: &str,
+    expression: &str,
+    variable: &str,
+    lower: f64,
+    upper: f64,
+) -> Result<Option<f64>, String> {
+    let root = bisect(tool, expression, variable, lower, upper)?;
+    let f_root = eval_at(tool, expression, variable, root)?;
+    if f_root.abs() < ROOT_VALIDATION_TOLERANCE {
+        Ok(Some(root))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Scan `[min, max]` in `SCAN_DIVISIONS` slices, detecting sign changes and
 /// already-at-root samples. Refines bracketed intervals with 50 bisection steps.
 #[must_use]
@@ -222,7 +276,7 @@ pub fn find_roots(expression: &str, variable: &str, min: f64, max: f64) -> Strin
             Some((min, y))
         }
         Ok(SampleKind::Undefined) => None,
-        Err(e) => return map_expression_error(tool, &e),
+        Err(e) => return map_expression_error(tool, &e, variable),
     };
 
     for idx in 1..=SCAN_DIVISIONS {
@@ -234,7 +288,7 @@ pub fn find_roots(expression: &str, variable: &str, min: f64, max: f64) -> Strin
                 prev = None;
                 continue;
             }
-            Err(e) => return map_expression_error(tool, &e),
+            Err(e) => return map_expression_error(tool, &e, variable),
         };
 
         if current_f.abs() < NEWTON_TOLERANCE {
@@ -242,8 +296,9 @@ pub fn find_roots(expression: &str, variable: &str, min: f64, max: f64) -> Strin
         } else if let Some((prev_x, prev_f)) = prev
             && prev_f * current_f < 0.0
         {
-            match bisect(tool, expression, variable, prev_x, current_x) {
-                Ok(root) => push_unique(&mut roots, root),
+            match refine_bracketed_root(tool, expression, variable, prev_x, current_x) {
+                Ok(Some(root)) => push_unique(&mut roots, root),
+                Ok(None) => {}
                 Err(msg) => return msg,
             }
         }
@@ -356,23 +411,29 @@ ROW_5: x=2.0 | y=4.0";
     }
 
     #[test]
-    fn plot_samples_pole_emit_nan_not_abort() {
+    fn plot_samples_pole_emit_undefined_not_abort() {
         // `1/x` has a pole at x=0 — the rest of the plot must still be drawn.
         let out = plot_function("1/x", "x", -1.0, 1.0, 4);
         assert!(out.starts_with("PLOT_FUNCTION: OK"), "got: {out}");
-        assert!(out.contains("y=NaN"), "expected NaN at pole, got: {out}");
+        assert!(
+            out.contains("y=undefined"),
+            "expected undefined marker at pole, got: {out}"
+        );
+        // No raw `NaN` tokens — consumers can parse y fields as f64|"undefined".
+        assert!(!out.contains("NaN"), "got: {out}");
         // Endpoints should still be evaluated (1/-1 = -1, 1/1 = 1).
         assert!(out.contains("x=-1.0 | y=-1.0"));
         assert!(out.contains("x=1.0 | y=1.0"));
     }
 
     #[test]
-    fn plot_out_of_domain_points_emit_nan_not_abort() {
+    fn plot_out_of_domain_points_emit_undefined_not_abort() {
         // `log(x)` is undefined for x<=0; the in-domain half of the plot
         // must survive.
         let out = plot_function("log(x)", "x", -1.0, 2.0, 3);
         assert!(out.starts_with("PLOT_FUNCTION: OK"), "got: {out}");
-        assert!(out.contains("y=NaN"));
+        assert!(out.contains("y=undefined"));
+        assert!(!out.contains("NaN"), "got: {out}");
     }
 
     #[test]
@@ -386,9 +447,11 @@ ROW_5: x=2.0 | y=4.0";
 
     #[test]
     fn plot_bubbles_unknown_variable() {
+        // Expression uses `unknown_var` but `x` is declared — the tool-layer
+        // rewrite calls out the declared-vs-found mismatch.
         assert_eq!(
             plot_function("unknown_var", "x", 0.0, 1.0, 2),
-            "PLOT_FUNCTION: ERROR\nREASON: [UNKNOWN_VARIABLE] expression references an unknown variable\nDETAIL: name=unknown_var"
+            "PLOT_FUNCTION: ERROR\nREASON: [UNKNOWN_VARIABLE] expression references a name that is not the declared variable\nDETAIL: found=unknown_var, declared=x"
         );
     }
 
@@ -420,7 +483,7 @@ ROW_5: x=2.0 | y=4.0";
     fn solve_bubbles_unknown_variable() {
         assert_eq!(
             solve_equation("bogus_var", "x", 1.0),
-            "SOLVE_EQUATION: ERROR\nREASON: [UNKNOWN_VARIABLE] expression references an unknown variable\nDETAIL: name=bogus_var"
+            "SOLVE_EQUATION: ERROR\nREASON: [UNKNOWN_VARIABLE] expression references a name that is not the declared variable\nDETAIL: found=bogus_var, declared=x"
         );
     }
 
@@ -449,10 +512,32 @@ ROW_5: x=2.0 | y=4.0";
     }
 
     #[test]
+    fn find_roots_rejects_tan_asymptotes_as_roots() {
+        // `tan_r(x)` on [-2, 2] has a true root at 0 and asymptotes at ±π/2
+        // (where f64 tan jumps from +∞ to −∞ through a huge finite value).
+        // The bisect would converge on each asymptote if the post-bisect
+        // validation were missing — regression would return 3 roots.
+        let out = find_roots("tan_r(x)", "x", -2.0, 2.0);
+        assert!(out.starts_with("FIND_ROOTS: OK | COUNT: 1"), "got: {out}");
+        assert!(out.contains("VALUES: 0.0"), "got: {out}");
+        assert!(!out.contains("1.5707"), "got: {out}");
+    }
+
+    #[test]
+    fn find_roots_rejects_rational_pole_sign_change() {
+        // `1/(x-0.5)` flips sign at x=0.5 but has no root there. Already
+        // guarded via `try_sample` classifying `1/0` as Undefined; this test
+        // pins the behaviour so a regression in the sample classifier can't
+        // resurface it through the bisect path.
+        let out = find_roots("1/(x-0.5)", "x", 0.0, 1.0);
+        assert!(out.contains("COUNT: 0"), "got: {out}");
+    }
+
+    #[test]
     fn find_roots_bubbles_unknown_variable() {
         assert_eq!(
             find_roots("bogus_var", "x", -1.0, 1.0),
-            "FIND_ROOTS: ERROR\nREASON: [UNKNOWN_VARIABLE] expression references an unknown variable\nDETAIL: name=bogus_var"
+            "FIND_ROOTS: ERROR\nREASON: [UNKNOWN_VARIABLE] expression references a name that is not the declared variable\nDETAIL: found=bogus_var, declared=x"
         );
     }
 
