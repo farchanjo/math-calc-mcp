@@ -181,6 +181,36 @@ const LOCALE_PATTERNS: &[&str] = &[
     "%m/%d/%Y",
 ];
 
+/// True when the string is a plausible Unix epoch count.
+///
+/// * A leading `-` is unambiguous — no ISO/locale format starts with `-`, so
+///   any negative integer is treated as a pre-1970 epoch value.
+/// * Unsigned values need at least 10 ASCII digits to pass, which keeps
+///   short strings like `"2024"` (ISO year) or `"20241225"` (YYYYMMDD) on
+///   the date-parser path.
+fn looks_like_epoch(raw: &str) -> bool {
+    if let Some(body) = raw.strip_prefix('-') {
+        return !body.is_empty() && body.bytes().all(|b| b.is_ascii_digit());
+    }
+    raw.len() >= 10 && raw.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn parse_epoch_number(raw: &str, zone: &TimeZone) -> Option<Zoned> {
+    // Distinguish seconds from milliseconds by magnitude rather than asking
+    // the caller: epoch-seconds > 1e10 would already be year 2286+, so any
+    // 13-digit non-negative value is almost certainly ms. Use the absolute
+    // value so negative (pre-epoch) seconds work too.
+    let abs_len = raw.strip_prefix('-').unwrap_or(raw).len();
+    let as_millis = abs_len >= 13;
+    let parsed: i64 = raw.parse().ok()?;
+    let timestamp = if as_millis {
+        Timestamp::from_millisecond(parsed).ok()?
+    } else {
+        Timestamp::from_second(parsed).ok()?
+    };
+    Some(timestamp.to_zoned(zone.clone()))
+}
+
 /// Best-effort parse accepting ISO zoned/offset/local forms plus a few common locale patterns.
 fn parse_datetime(tool: &str, datetime: &str, zone: &TimeZone) -> Result<Zoned, String> {
     if let Ok(zoned) = Zoned::from_str(datetime) {
@@ -188,6 +218,14 @@ fn parse_datetime(tool: &str, datetime: &str, zone: &TimeZone) -> Result<Zoned, 
     }
     if let Ok(ts) = Timestamp::from_str(datetime) {
         return Ok(ts.to_zoned(zone.clone()));
+    }
+    // Bare epoch numbers ("1234567890", "1234567890123") — the docstring
+    // advertises `epoch` as an accepted shape, but only `Timestamp::from_str`
+    // was consulted, which rejects integer-only strings.
+    if looks_like_epoch(datetime)
+        && let Some(zoned) = parse_epoch_number(datetime, zone)
+    {
+        return Ok(zoned);
     }
     if let Ok(civil) = DateTime::from_str(datetime) {
         return civil
@@ -397,6 +435,38 @@ mod tests {
             convert_timezone("not-a-date", "UTC", "UTC"),
             "CONVERT_TIMEZONE: ERROR\nREASON: [PARSE_ERROR] cannot parse datetime\nDETAIL: datetime=not-a-date"
         );
+    }
+
+    #[test]
+    fn convert_accepts_bare_epoch_seconds() {
+        // `1234567890` is Unix epoch 2009-02-13 23:31:30 UTC.
+        let out = convert_timezone("1234567890", "UTC", "UTC");
+        assert!(out.starts_with("CONVERT_TIMEZONE: OK"), "got: {out}");
+        assert!(out.contains("2009-02-13T23:31:30"), "got: {out}");
+    }
+
+    #[test]
+    fn convert_accepts_bare_epoch_milliseconds() {
+        // 13-digit values are disambiguated as epoch-ms.
+        let out = convert_timezone("1234567890123", "UTC", "UTC");
+        assert!(out.starts_with("CONVERT_TIMEZONE: OK"), "got: {out}");
+        assert!(out.contains("2009-02-13T23:31:30.123"), "got: {out}");
+    }
+
+    #[test]
+    fn convert_accepts_negative_epoch_seconds() {
+        // Pre-1970: `-86400` is 1969-12-31 00:00:00 UTC.
+        let out = convert_timezone("-86400", "UTC", "UTC");
+        assert!(out.starts_with("CONVERT_TIMEZONE: OK"), "got: {out}");
+        assert!(out.contains("1969-12-31T00:00:00"), "got: {out}");
+    }
+
+    #[test]
+    fn convert_still_rejects_short_digits_as_dates() {
+        // `"2024"` stays on the ISO-year path (fails because it's not a
+        // full datetime); it must NOT be silently read as epoch 2024.
+        let out = convert_timezone("2024", "UTC", "UTC");
+        assert!(out.starts_with("CONVERT_TIMEZONE: ERROR"), "got: {out}");
     }
 
     #[test]
