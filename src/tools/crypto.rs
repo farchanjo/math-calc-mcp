@@ -132,7 +132,15 @@ pub fn url_decode(input: &str) -> String {
             &format!("offset={offset}"),
         );
     }
-    match urlencoding::decode(input) {
+    // Translate `+` to space before percent-decoding. This matches the
+    // WHATWG `application/x-www-form-urlencoded` rules and every mainstream
+    // url-decoder (Python `urllib.parse.unquote_plus`, Java `URLDecoder`,
+    // JavaScript's body-parser, etc.) — real HTML forms encode spaces as
+    // `+`, so a decoder that leaves them literal silently breaks any caller
+    // feeding it form data. A literal `+` in the decoded output must be
+    // encoded as `%2B` on the wire, which this path preserves.
+    let form_normalized: String = input.replace('+', " ");
+    match urlencoding::decode(&form_normalized) {
         Ok(decoded) => Response::ok(TOOL_URL_DECODE)
             .result(decoded.into_owned())
             .build(),
@@ -237,6 +245,25 @@ mod tests {
     fn url_decode_rejects_single_digit_percent() {
         let out = url_decode("mid%A");
         assert!(out.starts_with("URL_DECODE: ERROR"));
+    }
+
+    #[test]
+    fn url_decode_translates_plus_to_space_form_encoding() {
+        // `application/x-www-form-urlencoded` encodes spaces as `+`. Every
+        // mainstream decoder (Python unquote_plus, Java URLDecoder, Node
+        // querystring, Ruby CGI.unescape) honours this; leaving `+` literal
+        // silently corrupts real-world form payloads.
+        let out = url_decode("hello+world");
+        assert!(out.contains("hello world"), "got {out}");
+    }
+
+    #[test]
+    fn url_decode_literal_plus_survives_via_percent_encoding() {
+        // A literal `+` in the decoded string must travel as `%2B`. This
+        // test pins the convention so the form-encoded `+` translation
+        // never shadows an escaped literal plus.
+        let out = url_decode("a%2Bb");
+        assert!(out.contains("a+b"), "got {out}");
     }
 
     #[test]
