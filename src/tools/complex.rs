@@ -53,7 +53,18 @@ impl C {
     }
 
     fn phase_deg(self) -> f64 {
-        self.im.atan2(self.re) * RAD_TO_DEG
+        // `atan2` returns `(-π, π]` in radians, which becomes `(-180°, 180°]`
+        // after scaling — almost. For `(-x, -0.0)` (imag = signed-negative
+        // zero) `atan2` bottoms out at `-π`, so the degree form lands on
+        // `-180.0`, which is *outside* the documented `(-180, 180]` interval.
+        // Map the lower boundary back to `+180` to match the docstring. The
+        // exact equality test with `-180.0` is deliberate: atan2 of signed
+        // zero produces that bitwise value, never a near-match like `-179.9…`.
+        let raw = self.im.atan2(self.re) * RAD_TO_DEG;
+        #[allow(clippy::float_cmp)]
+        {
+            if raw == -180.0 { 180.0 } else { raw }
+        }
     }
 
     fn div(self, other: Self) -> Option<Self> {
@@ -409,6 +420,15 @@ mod tests {
     #[test]
     fn phase_negative_real_is_180() {
         let out = complex_phase("-1,0");
+        assert!(out.contains("RESULT: 180.0"), "got {out}");
+    }
+
+    #[test]
+    fn phase_negative_real_epsilon_imag_stays_in_range() {
+        // Documented range is `(-180, 180]` — `atan2` underflows to -π when
+        // imag is a signed-negative zero, landing on -180° which is outside
+        // the interval. The wrap correction must push that back to +180°.
+        let out = complex_phase("-1,-0.0000000000000001");
         assert!(out.contains("RESULT: 180.0"), "got {out}");
     }
 
