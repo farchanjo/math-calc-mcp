@@ -120,10 +120,28 @@ fn fmt(value: f64) -> String {
     format!("{value:?}")
 }
 
+/// Collapse numerically-dead residue from trig round-trips (e.g.
+/// `sqrt(-1)` has real ≈ 6.1e-17 from `cos(π/2)`). The threshold scales with
+/// the companion component so honest small values — like the 1e-17 imag of a
+/// near-axis rotation — aren't mistakenly zeroed.
+fn snap_to_zero(primary: f64, companion: f64) -> f64 {
+    const ABS_EPS: f64 = 1e-12;
+    const REL_EPS: f64 = 1e-12;
+    if primary.abs() < ABS_EPS && primary.abs() < REL_EPS * companion.abs() {
+        0.0
+    } else {
+        primary
+    }
+}
+
 fn ok_complex(tool: &str, c: C) -> String {
+    // Snap near-zero components driven by trig noise so `complexSqrt(-1)`
+    // reports `REAL: 0.0 | IMAG: 1.0` instead of `REAL: 6.123…e-17 | IMAG: 1.0`.
+    let re = snap_to_zero(c.re, c.im);
+    let im = snap_to_zero(c.im, c.re);
     Response::ok(tool)
-        .field("REAL", fmt(c.re))
-        .field("IMAG", fmt(c.im))
+        .field("REAL", fmt(re))
+        .field("IMAG", fmt(im))
         .build()
 }
 
