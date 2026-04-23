@@ -30,6 +30,25 @@ fn format_f64(value: f64) -> String {
     format!("{value:?}")
 }
 
+/// Collapse numerical-differentiation residue to the nearest integer when the
+/// delta is within roughly 1e-9 of the magnitude. Five-point finite difference
+/// consistently bleeds ~1e-12 noise — enough for `d/dx x²` at `x=3` to print
+/// `6.000000001282757` instead of the textbook `6`. Anything further from an
+/// integer than the threshold is genuine and passes through untouched.
+fn snap_near_integer(value: f64) -> f64 {
+    if !value.is_finite() {
+        return value;
+    }
+    let rounded = value.round();
+    let delta = (value - rounded).abs();
+    let scale = value.abs().max(1.0);
+    if delta <= 1e-9 * scale {
+        rounded
+    } else {
+        value
+    }
+}
+
 /// Evaluate `expression` with `variable` bound to `value`.
 fn eval(expression: &str, variable: &str, value: f64) -> Result<f64, ExpressionError> {
     let mut vars: HashMap<String, f64> = HashMap::with_capacity(1);
@@ -163,7 +182,9 @@ pub fn derivative(expression: &str, variable: &str, point: f64) -> String {
             "derivative diverges at the evaluation point",
             &format!("{variable}={point}"),
         ),
-        Ok(value) => Response::ok(tool).result(format_f64(value)).build(),
+        Ok(value) => Response::ok(tool)
+            .result(format_f64(snap_near_integer(value)))
+            .build(),
         Err(err) => map_expression_error(tool, &err),
     }
 }
@@ -190,7 +211,9 @@ pub fn nth_derivative(expression: &str, variable: &str, point: f64, order: i32) 
             "derivative diverges at the evaluation point",
             &format!("{variable}={point}"),
         ),
-        Ok(value) => Response::ok(tool).result(format_f64(value)).build(),
+        Ok(value) => Response::ok(tool)
+            .result(format_f64(snap_near_integer(value)))
+            .build(),
         Err(err) => map_expression_error(tool, &err),
     }
 }
@@ -254,8 +277,9 @@ pub fn tangent_line(expression: &str, variable: &str, point: f64) -> String {
             &format!("{variable}={point}"),
         );
     }
-    let y_intercept = slope.mul_add(-point, f_at_point);
-    let slope_s = format_f64(slope);
+    let slope_clean = snap_near_integer(slope);
+    let y_intercept = snap_near_integer(slope_clean.mul_add(-point, f_at_point));
+    let slope_s = format_f64(slope_clean);
     let intercept_s = format_f64(y_intercept);
     let equation = format!("y = {slope_s}*x + {intercept_s}");
     Response::ok(tool)
@@ -296,6 +320,13 @@ mod tests {
     #[test]
     fn derivative_of_constant_is_zero() {
         assert_eq!(derivative("7", "x", 2.0), "DERIVATIVE: OK | RESULT: 0.0");
+    }
+
+    #[test]
+    fn derivative_snaps_to_nearest_integer() {
+        // Regression: raw five-point difference bleeds ~1e-12 noise, so
+        // f'(x²)|₃ would print 6.000000001282757 without snapping.
+        assert_eq!(derivative("x^2", "x", 3.0), "DERIVATIVE: OK | RESULT: 6.0");
     }
 
     #[test]
