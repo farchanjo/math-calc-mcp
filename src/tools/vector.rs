@@ -15,7 +15,14 @@ const TOOL_MAGNITUDE_ARRAY: &str = "MAGNITUDE_ARRAY";
 
 /// Parse a comma-separated list of f64 values. Each failure surfaces through the
 /// tool-scoped envelope so the caller sees which token broke.
+///
+/// A fully blank input yields an empty `Vec` so the caller can map it to the
+/// canonical `INVALID_INPUT "input array must not be empty"` — matching the
+/// statistics helpers instead of fielding a spurious `PARSE_ERROR`.
 fn parse_array(tool: &str, label: &str, input: &str) -> Result<Vec<f64>, String> {
+    if input.trim().is_empty() {
+        return Ok(Vec::new());
+    }
     let parts: Vec<&str> = input.split(',').collect();
     let mut result = Vec::with_capacity(parts.len());
     for part in parts {
@@ -251,11 +258,16 @@ mod tests {
     }
 
     #[test]
-    fn sum_array_empty_string_is_parse_error() {
-        // "" splits into [""] which fails to parse as f64.
+    fn sum_array_empty_string_is_invalid_input() {
+        // Blank input is structurally empty, not a parse failure — report the
+        // same `INVALID_INPUT` code that `mean`/`median` use.
         assert_eq!(
             sum_array(""),
-            "SUM_ARRAY: ERROR\nREASON: [PARSE_ERROR] array element is not a valid number\nDETAIL: numbers="
+            "SUM_ARRAY: ERROR\nREASON: [INVALID_INPUT] input array must not be empty"
+        );
+        assert_eq!(
+            sum_array("   "),
+            "SUM_ARRAY: ERROR\nREASON: [INVALID_INPUT] input array must not be empty"
         );
     }
 
@@ -342,10 +354,10 @@ mod tests {
 
     #[test]
     fn magnitude_array_empty() {
-        // "" splits into [""] → parse error, not empty-array error.
+        // Blank input is structurally empty, not a parse failure.
         assert_eq!(
             magnitude_array(""),
-            "MAGNITUDE_ARRAY: ERROR\nREASON: [PARSE_ERROR] array element is not a valid number\nDETAIL: numbers="
+            "MAGNITUDE_ARRAY: ERROR\nREASON: [INVALID_INPUT] input array must not be empty"
         );
     }
 }
