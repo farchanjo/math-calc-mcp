@@ -37,7 +37,10 @@ path = "src/main.rs"
 rmcp = { version = "1.5", features = ["server", "transport-io"] }
 
 # Async runtime
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "io-std", "io-util", "sync", "signal"] }
+# `net` is needed for `tokio::io::unix::AsyncFd`, which backs the
+# non-blocking stdio transport. We don't actually serve TCP; the feature is
+# the only way to get `AsyncFd` exported from tokio 1.x.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "io-std", "io-util", "sync", "signal", "net", "time"] }
 
 # Serialization / JSON
 serde = { version = "1", features = ["derive"] }
@@ -62,6 +65,12 @@ jiff = { version = "0.2", features = ["serde"] }
 
 # Portable SIMD (auto-dispatches SSE2/AVX2/AVX-512/NEON)
 wide = "0.7"
+
+# Low-level system calls for the non-blocking stdio transport (Unix only).
+# Already a transitive dep of tokio, made explicit here because we call
+# `fcntl`/`read`/`write` directly in `transport::async_stdio`.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # Cryptographic hashes (pure-Rust RustCrypto suite)
 md-5 = "0.10"
