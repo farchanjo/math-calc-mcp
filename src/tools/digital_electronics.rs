@@ -501,11 +501,17 @@ fn compute_timer_astable(inputs: &TimerAstableInputs) -> Result<TimerAstableTimi
             "frequency must not be zero",
         ));
     }
-    let period = div_scaled(&BigDecimal::from(1), &freq);
-    let r_sum = add_ctx(&inputs.r1, &inputs.r2);
-    let duty = mul_ctx(&div_scaled(&r_sum, &r1_plus_2r2), &BigDecimal::from(100));
     let ln2_literal = BigDecimal::from_str("0.69314718055994530941723212145817656808")
         .expect("valid ln(2) literal");
+    // Derive period directly from `T = ln(2)·(R1+2·R2)·C` instead of `1/freq`.
+    // The `1/freq` route goes through `div_scaled` which caps at 20 decimal
+    // places, so sub-`10⁻²⁰` periods truncate to a deceptive `0` despite
+    // HIGH_TIME/LOW_TIME (also products) showing the correct scientific
+    // notation. Computing the product keeps every precision-bounded sig
+    // digit regardless of magnitude.
+    let period = mul_ctx(&ln2_literal, &denominator);
+    let r_sum = add_ctx(&inputs.r1, &inputs.r2);
+    let duty = mul_ctx(&div_scaled(&r_sum, &r1_plus_2r2), &BigDecimal::from(100));
     let high_time = mul_ctx(&mul_ctx(&ln2_literal, &r_sum), &inputs.c);
     let low_time = mul_ctx(&mul_ctx(&ln2_literal, &inputs.r2), &inputs.c);
     Ok(TimerAstableTiming {
@@ -617,7 +623,12 @@ pub fn frequency_period(value: &str, mode: &str) -> String {
             "value must be positive",
         );
     }
-    let out = div_scaled(&BigDecimal::from(1), &val);
+    // Precision-based (not scale-based) reciprocal — the `div_scaled` path
+    // caps at `DIVISION_SCALE=20` decimal places, which silently truncates
+    // a legit reciprocal like `1/1e25 = 1e-25` to `0`. Switching to
+    // `with_precision_round` keeps 34 significant digits regardless of
+    // magnitude, so `freqToPeriod(1e25)` surfaces the real period.
+    let out = (BigDecimal::from(1) / &val).with_precision_round(precision(), RoundingMode::HalfUp);
     Response::ok(FREQUENCY_PERIOD)
         .result(strip_plain(&out))
         .build()
@@ -852,6 +863,27 @@ mod tests {
     }
 
     #[test]
+    fn bitwise_not_is_arbitrary_precision_twos_complement() {
+        // NOT n = -(n + 1) in unbounded two's-complement. Documented in the
+        // tool description — callers wanting an 8/16/32/64-bit-width NOT
+        // should combine with `twosComplement`.
+        assert_eq!(bitwise_op("5", "0", "NOT"), "BITWISE_OP: OK | RESULT: -6");
+        assert_eq!(bitwise_op("0", "0", "NOT"), "BITWISE_OP: OK | RESULT: -1");
+        assert_eq!(bitwise_op("-1", "0", "NOT"), "BITWISE_OP: OK | RESULT: 0");
+    }
+
+    #[test]
+    fn bitwise_shl_is_unbounded() {
+        // SHL on BigInt does not wrap at any fixed width — `5 << 100` grows
+        // into a 31-digit integer instead of becoming zero. Kept consistent
+        // with NOT so the whole tool uses one semantic.
+        assert_eq!(
+            bitwise_op("5", "100", "SHL"),
+            "BITWISE_OP: OK | RESULT: 6338253001141147007483516026880"
+        );
+    }
+
+    #[test]
     fn bitwise_accepts_hex_and_binary_prefixes() {
         assert_eq!(
             bitwise_op("0xFF", "0x0F", "XOR"),
@@ -984,6 +1016,29 @@ mod tests {
     }
 
     #[test]
+    fn timer_555_astable_period_survives_tiny_rc() {
+        // Regression: with `r1=r2=1e-9Ω, c=1e-12F`, period ≈ 2.08e-21 s —
+        // well below the `div_scaled` 20-decimal-place cap. Before the fix,
+        // PERIOD rendered as `0` while HIGH_TIME/LOW_TIME correctly showed
+        // scientific notation; a glaring inconsistency for sub-nanohenry /
+        // sub-picofarad test inputs. Computing period directly as
+        // `ln(2)·(R1+2R2)·C` sidesteps the scale-rounding entirely.
+        let out = timer_555_astable("1e-9", "1e-9", "1e-12");
+        assert!(out.starts_with("TIMER_555_ASTABLE: OK"), "got {out}");
+        let anchor = out.find(" | PERIOD: ").unwrap() + " | PERIOD: ".len();
+        let rest = &out[anchor..];
+        let end = rest.find(' ').unwrap_or(rest.len());
+        let period_str = &rest[..end];
+        assert_ne!(period_str, "0", "period must not truncate to 0, got {out}");
+        // Value is tiny but finite and of the expected order of magnitude.
+        let period: f64 = period_str.parse().expect("period should parse as f64");
+        assert!(
+            period > 1e-22 && period < 1e-20,
+            "period={period}, got {out}"
+        );
+    }
+
+    #[test]
     fn timer_555_astable_rejects_zero_r1() {
         assert_eq!(
             timer_555_astable("0", "1000", "0.000001"),
@@ -1029,6 +1084,35 @@ mod tests {
             frequency_period("0.001", "periodToFreq"),
             "FREQUENCY_PERIOD: OK | RESULT: 1000"
         );
+    }
+
+    #[test]
+    fn frequency_period_survives_extreme_magnitudes() {
+        // Regression: `div_scaled` caps at 20 decimal places, so
+        // `freqToPeriod(1e25)` (true period = 1e-25s) used to truncate to
+        // `0`. Switching to precision-based division preserves 34 sig
+        // digits at any magnitude.
+        let out = frequency_period("1e25", "freqToPeriod");
+        assert!(out.starts_with("FREQUENCY_PERIOD: OK"), "got {out}");
+        assert!(
+            !out.ends_with(" RESULT: 0"),
+            "period must not truncate to 0, got {out}"
+        );
+        let anchor = out.find("RESULT: ").unwrap() + "RESULT: ".len();
+        let rest = &out[anchor..];
+        let period: f64 = rest.trim().parse().expect("parses as f64");
+        assert!(
+            period > 1e-26 && period < 1e-24,
+            "period={period}, got {out}"
+        );
+
+        // Same protection for the reverse direction — `periodToFreq(1e-25)`.
+        let rev = frequency_period("1e-25", "periodToFreq");
+        assert!(rev.starts_with("FREQUENCY_PERIOD: OK"), "got {rev}");
+        let anchor2 = rev.find("RESULT: ").unwrap() + "RESULT: ".len();
+        let rest2 = &rev[anchor2..];
+        let freq: f64 = rest2.trim().parse().expect("parses as f64");
+        assert!(freq > 1e24 && freq < 1e26, "freq={freq}, got {rev}");
     }
 
     #[test]
