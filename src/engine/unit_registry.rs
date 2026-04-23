@@ -501,6 +501,10 @@ fn register_data_storage(reg: &mut Reg) {
 fn register_length(reg: &mut Reg) {
     let cat = UnitCategory::Length;
     reg.reg_base("m", "meter", cat);
+    // SI sub-metric prefixes used in optics, chemistry, and microfabrication.
+    reg.reg_factor("um", "micrometer", cat, bd("0.000001"));
+    reg.reg_factor("nm", "nanometer", cat, bd("0.000000001"));
+    reg.reg_factor("ang", "angstrom", cat, bd("0.0000000001"));
     reg.reg_factor("mm", "millimeter", cat, MILLI.clone());
     reg.reg_factor("cm", "centimeter", cat, bd("0.01"));
     reg.reg_factor("km", "kilometer", cat, THOUSAND.clone());
@@ -509,6 +513,8 @@ fn register_length(reg: &mut Reg) {
     reg.reg_factor("yd", "yard", cat, bd("0.9144"));
     reg.reg_factor("mi", "mile", cat, bd("1609.344"));
     reg.reg_factor("nmi", "nautical mile", cat, bd("1852"));
+    // Imperial thou = one thousandth of an inch, common in machining.
+    reg.reg_factor("mil", "thou", cat, bd("0.0000254"));
 }
 
 fn register_mass(reg: &mut Reg) {
@@ -1079,14 +1085,33 @@ mod tests {
     }
 
     #[test]
-    fn length_units_match_java_declaration() {
+    fn length_units_match_canonical_catalogue() {
         let codes: Vec<&str> = list_units(UnitCategory::Length)
             .iter()
             .map(|u| u.code.as_str())
             .collect();
         assert_eq!(
             codes,
-            vec!["m", "mm", "cm", "km", "in", "ft", "yd", "mi", "nmi"]
+            vec![
+                "m", "um", "nm", "ang", "mm", "cm", "km", "in", "ft", "yd", "mi", "nmi", "mil",
+            ]
+        );
+    }
+
+    #[test]
+    fn length_sub_millimetre_conversions_exact() {
+        assert_eq!(
+            convert(&bd_test("1"), "m", "nm").unwrap(),
+            bd_test("1000000000")
+        );
+        assert_eq!(
+            convert(&bd_test("1"), "m", "um").unwrap(),
+            bd_test("1000000")
+        );
+        assert_eq!(convert(&bd_test("1"), "nm", "ang").unwrap(), bd_test("10"));
+        assert_eq!(
+            convert(&bd_test("1"), "in", "mil").unwrap(),
+            bd_test("1000")
         );
     }
 
@@ -1300,11 +1325,11 @@ mod tests {
 
     #[test]
     fn all_units_has_expected_count() {
-        // DATA_STORAGE now includes both SI decimal (kb/mb/gb/tb/pb) and IEC
-        // binary (kib/mib/gib/tib/pib) families alongside byte/bit — 12 total.
-        // 12 + 9 + 7 + 9 + 4 + 7 + 5 + 7 + 6 + 4 + 6 + 4 + 4 + 5 + 6 + 9 + 4 + 5 + 4 + 4 + 4
+        // DATA_STORAGE = 12 (SI decimal + IEC binary + byte/bit).
+        // LENGTH = 13 (added um, nm, ang, mil on top of the original 9).
+        // 12 + 13 + 7 + 9 + 4 + 7 + 5 + 7 + 6 + 4 + 6 + 4 + 4 + 5 + 6 + 9 + 4 + 5 + 4 + 4 + 4
         let expected =
-            12 + 9 + 7 + 9 + 4 + 7 + 5 + 7 + 6 + 4 + 6 + 4 + 4 + 5 + 6 + 9 + 4 + 5 + 4 + 4 + 4;
+            12 + 13 + 7 + 9 + 4 + 7 + 5 + 7 + 6 + 4 + 6 + 4 + 4 + 5 + 6 + 9 + 4 + 5 + 4 + 4 + 4;
         assert_eq!(all_units().len(), expected);
     }
 

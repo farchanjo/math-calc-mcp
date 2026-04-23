@@ -152,7 +152,7 @@ mod tests {
     fn list_units_length() {
         assert_eq!(
             list_units("LENGTH"),
-            "LIST_UNITS: OK | CATEGORY: LENGTH | COUNT: 9 | VALUES: m,mm,cm,km,in,ft,yd,mi,nmi"
+            "LIST_UNITS: OK | CATEGORY: LENGTH | COUNT: 13 | VALUES: m,um,nm,ang,mm,cm,km,in,ft,yd,mi,nmi,mil"
         );
     }
 
@@ -160,7 +160,7 @@ mod tests {
     fn list_units_case_insensitive_category() {
         assert_eq!(
             list_units("length"),
-            "LIST_UNITS: OK | CATEGORY: LENGTH | COUNT: 9 | VALUES: m,mm,cm,km,in,ft,yd,mi,nmi"
+            "LIST_UNITS: OK | CATEGORY: LENGTH | COUNT: 13 | VALUES: m,um,nm,ang,mm,cm,km,in,ft,yd,mi,nmi,mil"
         );
     }
 
