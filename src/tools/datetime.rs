@@ -211,6 +211,28 @@ fn parse_epoch_number(raw: &str, zone: &TimeZone) -> Option<Zoned> {
     Some(timestamp.to_zoned(zone.clone()))
 }
 
+/// DST-strict civil-to-zoned conversion. Errors if the civil datetime falls
+/// inside a spring-forward gap (does not exist in the zone) or an autumn-fold
+/// overlap (is ambiguous between two offsets). Jiff's default
+/// `civil.to_zoned(zone)` silently picks an offset via the `Compatible`
+/// strategy, which hides real input bugs — e.g. `2020-03-08T02:30` in
+/// `America/New_York` is an invented time yet was accepted.
+fn civil_to_zoned_strict(
+    tool: &str,
+    civil: DateTime,
+    zone: &TimeZone,
+    raw: &str,
+) -> Result<Zoned, String> {
+    zone.to_ambiguous_zoned(civil).unambiguous().map_err(|_| {
+        error_with_detail(
+            tool,
+            ErrorCode::InvalidInput,
+            "datetime is ambiguous in this timezone (DST gap or fold)",
+            &format!("datetime={raw}"),
+        )
+    })
+}
+
 /// Best-effort parse accepting ISO zoned/offset/local forms plus a few common locale patterns.
 fn parse_datetime(tool: &str, datetime: &str, zone: &TimeZone) -> Result<Zoned, String> {
     if let Ok(zoned) = Zoned::from_str(datetime) {
@@ -228,24 +250,18 @@ fn parse_datetime(tool: &str, datetime: &str, zone: &TimeZone) -> Result<Zoned, 
         return Ok(zoned);
     }
     if let Ok(civil) = DateTime::from_str(datetime) {
-        return civil
-            .to_zoned(zone.clone())
-            .map_err(|_| datetime_parse_error(tool, datetime));
+        return civil_to_zoned_strict(tool, civil, zone, datetime);
     }
 
     for pattern in LOCALE_PATTERNS {
         if let Ok(civil) = DateTime::strptime(pattern, datetime) {
-            return civil
-                .to_zoned(zone.clone())
-                .map_err(|_| datetime_parse_error(tool, datetime));
+            return civil_to_zoned_strict(tool, civil, zone, datetime);
         }
     }
 
     if let Ok(date) = Date::from_str(datetime) {
-        return date
-            .to_datetime(jiff::civil::Time::midnight())
-            .to_zoned(zone.clone())
-            .map_err(|_| datetime_parse_error(tool, datetime));
+        let civil = date.to_datetime(jiff::civil::Time::midnight());
+        return civil_to_zoned_strict(tool, civil, zone, datetime);
     }
 
     Err(datetime_parse_error(tool, datetime))
@@ -281,6 +297,18 @@ fn parse_with_format(
                 .map(|ts| ts.to_zoned(zone.clone()))
                 .map_err(|_| datetime_parse_error(tool, datetime))
         }
+        "rfc1123" => {
+            // Symmetric with the `rfc1123` output branch in `format_output`.
+            // Without this case the input fell through to `strptime`, which
+            // interpreted "rfc1123" as a literal pattern and always failed,
+            // breaking the round-trip documented in the tool description.
+            // `rfc2822::parse` returns a `Zoned` carrying the offset from
+            // the input; converting to `zone` keeps the semantics of the
+            // caller-supplied zone argument.
+            rfc2822::parse(datetime)
+                .map(|zoned| zoned.with_time_zone(zone.clone()))
+                .map_err(|_| datetime_parse_error(tool, datetime))
+        }
         _ => {
             if let Ok(zoned) = Zoned::strptime(input_format, datetime) {
                 return Ok(zoned);
@@ -294,11 +322,7 @@ fn parse_with_format(
                         &format!("format={input_format}"),
                     ))
                 },
-                |civil| {
-                    civil
-                        .to_zoned(zone.clone())
-                        .map_err(|_| datetime_parse_error(tool, datetime))
-                },
+                |civil| civil_to_zoned_strict(tool, civil, zone, datetime),
             )
         }
     }
@@ -510,6 +534,30 @@ mod tests {
     }
 
     #[test]
+    fn format_rfc1123_input_roundtrips() {
+        // Regression: the `rfc1123` keyword was documented as an input
+        // format and recognised as an output format, but the parse path
+        // fell through to `strptime("rfc1123", …)` and always failed —
+        // the round-trip was impossible to close. Both GMT/`+0000` forms
+        // of an RFC 1123 timestamp must parse.
+        let out = format_datetime("Wed, 22 Apr 2026 15:30:00 +0000", "rfc1123", "iso", "UTC");
+        assert!(out.starts_with("FORMAT_DATETIME: OK"), "got {out}");
+        assert!(out.contains("2026-04-22T15:30:00"), "got {out}");
+
+        let out_gmt = format_datetime("Wed, 22 Apr 2026 15:30:00 GMT", "rfc1123", "iso", "UTC");
+        assert!(out_gmt.starts_with("FORMAT_DATETIME: OK"), "got {out_gmt}");
+
+        // End-to-end round-trip: ISO → RFC1123 → ISO returns the original.
+        let rfc = format_datetime("2026-03-04T12:00:00Z", "iso", "rfc1123", "UTC");
+        let value = rfc
+            .strip_prefix("FORMAT_DATETIME: OK | RESULT: ")
+            .and_then(|rest| rest.split(" | ").next())
+            .unwrap_or_else(|| panic!("could not extract RFC1123 value from {rfc}"));
+        let back = format_datetime(value, "rfc1123", "iso", "UTC");
+        assert!(back.contains("2026-03-04T12:00:00"), "got {back}");
+    }
+
+    #[test]
     fn format_strftime_uppercase_conversions_preserved() {
         // Regression: `format.to_ascii_lowercase()` used to mangle the
         // strftime pattern before forwarding it to jiff, turning %Y into
@@ -648,5 +696,32 @@ mod tests {
         // Must still accept strftime patterns that contain `%` tokens.
         let out = format_datetime("2026-04-22T10:30:00Z", "iso", "%Y-%m-%d", "UTC");
         assert_eq!(out, "FORMAT_DATETIME: OK | RESULT: 2026-04-22");
+    }
+
+    #[test]
+    fn convert_rejects_dst_gap_in_spring_forward() {
+        // 2020-03-08T02:30 does not exist in America/New_York (clocks skip
+        // from 02:00 to 03:00). Jiff's default `.to_zoned()` silently picks
+        // the later offset; we surface the ambiguity so callers can catch
+        // the bad input.
+        let out = convert_timezone("2020-03-08T02:30:00", "America/New_York", "UTC");
+        assert!(out.contains("CONVERT_TIMEZONE: ERROR"), "got {out}");
+        assert!(out.contains("DST gap or fold"), "got {out}");
+    }
+
+    #[test]
+    fn convert_rejects_dst_fold_in_autumn_back() {
+        // 2024-11-03T01:30 America/New_York is ambiguous (occurs at both
+        // -04:00 and -05:00). Must be flagged.
+        let out = convert_timezone("2024-11-03T01:30:00", "America/New_York", "UTC");
+        assert!(out.contains("CONVERT_TIMEZONE: ERROR"), "got {out}");
+        assert!(out.contains("DST gap or fold"), "got {out}");
+    }
+
+    #[test]
+    fn convert_accepts_unambiguous_local_time() {
+        // A well-defined civil datetime must still round-trip.
+        let out = convert_timezone("2024-06-15T12:00:00", "America/New_York", "UTC");
+        assert!(out.starts_with("CONVERT_TIMEZONE: OK"), "got {out}");
     }
 }
