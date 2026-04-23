@@ -262,10 +262,55 @@ fn decode_gray_to_binary(binary: &str, width: usize) -> String {
     pad_binary(&num.to_str_radix(2), width)
 }
 
+/// Peel a radix prefix (`0x`/`0X`, `0b`/`0B`, `0o`/`0O`) off `body` and return
+/// `(radix, digit-tail)`. Falls back to `(10, body)` when no prefix is present.
+fn detect_radix(body: &str) -> (u32, &str) {
+    const PREFIXES: &[(&str, u32)] = &[
+        ("0x", 16),
+        ("0X", 16),
+        ("0b", 2),
+        ("0B", 2),
+        ("0o", 8),
+        ("0O", 8),
+    ];
+    for (pfx, radix) in PREFIXES {
+        if let Some(rest) = body.strip_prefix(pfx) {
+            return (*radix, rest);
+        }
+    }
+    (10, body)
+}
+
+/// Parse an integer literal in decimal (default), hex (`0x`/`-0x`), octal
+/// (`0o`), or binary (`0b`). Matches common electronics-tool notation so
+/// `bitwiseOp("0xFF", "0x0F", "XOR")` just works.
+fn parse_bitwise_operand(raw: &str) -> Option<BigInt> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let (negative, body) = match trimmed.as_bytes().first() {
+        Some(b'-') => (true, &trimmed[1..]),
+        Some(b'+') => (false, &trimmed[1..]),
+        _ => (false, trimmed),
+    };
+    let (radix, digits) = detect_radix(body);
+    if digits.is_empty() {
+        return None;
+    }
+    let magnitude = BigInt::parse_bytes(digits.as_bytes(), radix)?;
+    Some(if negative { -magnitude } else { magnitude })
+}
+
+fn parse_shift_amount(raw: &str) -> Option<u32> {
+    let value = parse_bitwise_operand(raw)?;
+    u32::try_from(value).ok()
+}
+
 /// Bitwise AND/OR/XOR/NOT/SHL/SHR. Returns the decimal result.
 #[must_use]
 pub fn bitwise_op(a: &str, b: &str, operation: &str) -> String {
-    let Ok(val_a) = BigInt::from_str(a.trim()) else {
+    let Some(val_a) = parse_bitwise_operand(a) else {
         return error_with_detail(
             BITWISE_OP,
             ErrorCode::ParseError,
@@ -275,12 +320,12 @@ pub fn bitwise_op(a: &str, b: &str, operation: &str) -> String {
     };
     let op = operation.to_ascii_uppercase();
     let computed: Option<BigInt> = match op.as_str() {
-        "AND" => BigInt::from_str(b.trim()).ok().map(|vb| &val_a & &vb),
-        "OR" => BigInt::from_str(b.trim()).ok().map(|vb| &val_a | &vb),
-        "XOR" => BigInt::from_str(b.trim()).ok().map(|vb| &val_a ^ &vb),
+        "AND" => parse_bitwise_operand(b).map(|vb| &val_a & &vb),
+        "OR" => parse_bitwise_operand(b).map(|vb| &val_a | &vb),
+        "XOR" => parse_bitwise_operand(b).map(|vb| &val_a ^ &vb),
         "NOT" => Some(!val_a),
-        "SHL" => b.trim().parse::<u32>().ok().map(|shift| &val_a << shift),
-        "SHR" => b.trim().parse::<u32>().ok().map(|shift| &val_a >> shift),
+        "SHL" => parse_shift_amount(b).map(|shift| &val_a << shift),
+        "SHR" => parse_shift_amount(b).map(|shift| &val_a >> shift),
         _ => {
             return error_with_detail(
                 BITWISE_OP,
@@ -732,6 +777,43 @@ mod tests {
         assert_eq!(
             bitwise_op("1", "1", "NAND"),
             "BITWISE_OP: ERROR\nREASON: [INVALID_INPUT] unknown operation\nDETAIL: operation=NAND"
+        );
+    }
+
+    #[test]
+    fn bitwise_accepts_hex_and_binary_prefixes() {
+        assert_eq!(
+            bitwise_op("0xFF", "0x0F", "XOR"),
+            "BITWISE_OP: OK | RESULT: 240"
+        );
+        assert_eq!(
+            bitwise_op("0b1010", "0b0110", "AND"),
+            "BITWISE_OP: OK | RESULT: 2"
+        );
+        assert_eq!(
+            bitwise_op("0o17", "0o7", "OR"),
+            "BITWISE_OP: OK | RESULT: 15"
+        );
+        // Case-insensitive prefix; leading + allowed; negative supported.
+        assert_eq!(
+            bitwise_op("0X10", "0X01", "OR"),
+            "BITWISE_OP: OK | RESULT: 17"
+        );
+        assert_eq!(
+            bitwise_op("-0xFF", "0", "OR"),
+            "BITWISE_OP: OK | RESULT: -255"
+        );
+    }
+
+    #[test]
+    fn bitwise_rejects_malformed_literal() {
+        assert_eq!(
+            bitwise_op("0xZZ", "1", "AND"),
+            "BITWISE_OP: ERROR\nREASON: [PARSE_ERROR] operand A is not a valid integer\nDETAIL: a=0xZZ"
+        );
+        assert_eq!(
+            bitwise_op("1", "0b", "AND"),
+            "BITWISE_OP: ERROR\nREASON: [PARSE_ERROR] operand B is not a valid integer\nDETAIL: b=0b"
         );
     }
 
