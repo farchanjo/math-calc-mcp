@@ -28,6 +28,17 @@ use crate::engine::expression::ExpressionError;
 const EXACT_PRECISION: u64 = 38;
 /// `astro-float` mantissa precision (in bits) used during transcendentals.
 const AF_PRECISION: usize = 192;
+/// Values with magnitude below 10⁻³⁵ after a transcendental are collapsed to
+/// exact zero. Sits three decades below [`EXACT_PRECISION`] — beyond any
+/// observable result yet above the last-digit noise astro-float can produce
+/// when the input is itself a finite-digit approximation (e.g. `sin_r(pi)`).
+const TRIG_ZERO_SNAP_NEG_EXPONENT: i64 = 35;
+/// Exponent used for the final integer-snap at output. Short compositions of
+/// transcendentals (`sqrt(2)^2`, `exp(log(5))`) amplify the per-call trim
+/// noise into the `10^-34` – `10^-32` range; a threshold one decade looser
+/// than the per-call snap catches those without clobbering legitimate high-
+/// precision results (`BigDecimal` arithmetic at 20+ digits is untouched).
+const COMPOSE_SNAP_NEG_EXPONENT: u32 = 32;
 /// Cap on the estimated printed length of an integer-exponent `pow` result.
 /// Mirrors the guard in [`crate::tools::basic::power`] — expressions like
 /// `2^1000000` would otherwise produce a 300k-character payload that exceeds
@@ -109,7 +120,12 @@ pub fn evaluate_with_variables<S: BuildHasher>(
         }
         value
     };
-    Ok(strip_plain(&result))
+    // Final cleanup for composed round-trips — e.g. `sqrt(2)^2` where the
+    // per-call trim in `bf_to_bd` still leaves an `O(10⁻³⁴)` residue around
+    // the answer. Snapping near integers at 10⁻³² catches that without
+    // altering legitimate high-precision decimals.
+    let cleaned = snap_composed_integer(result);
+    Ok(strip_plain(&cleaned))
 }
 
 // --------------------------------------------------------------------------- //
@@ -126,13 +142,91 @@ fn bd_to_bf(value: &BigDecimal, consts: &mut Consts) -> BigFloat {
     )
 }
 
+/// Trustworthy precision after a transcendental round-trip through
+/// astro-float's 192-bit mantissa and back to decimal. A 192-bit float carries
+/// ≈ 57.8 decimal digits, but the last 2–3 digits are always binary-to-decimal
+/// conversion noise: `sqrt(2)^2` returns `2 + 8.58e-38` at 38-digit width,
+/// `exp(log(5))` returns `4.9̅99` with 38 trailing nines. Trimming to
+/// `EXACT_PRECISION - 3` = 35 sig digits absorbs the drift without discarding
+/// any information the user could actually rely on.
+const SAFE_PRECISION: u64 = EXACT_PRECISION - 3;
+
+/// Convert an astro-float `BigFloat` to the canonical `BigDecimal` form.
+///
+/// Runs two cleanup passes so the evaluator returns mathematically clean
+/// results from transcendental round-trips:
+///
+/// * **Precision trim** — round to [`SAFE_PRECISION`] digits so the last 2–3
+///   digits of binary-to-decimal noise are dropped. Turns `2 + 8.58e-38` into
+///   an exact `2` and `4.9̅99` into an exact `5`.
+/// * **Sub-noise-floor snap** — collapse residuals below `10⁻³⁵` in magnitude
+///   to exact zero. Catches cases like `sin_r(pi)` which leaves a residue at
+///   `-2.83e-39` after astro-float evaluates `sin` on a 38-digit `pi`.
 fn bf_to_bd(value: &BigFloat, consts: &mut Consts) -> BigDecimal {
     let formatted = value
         .format(Radix::Dec, AfRm::ToEven, consts)
         .unwrap_or_else(|_| "0".to_string());
-    BigDecimal::from_str(&formatted)
-        .unwrap_or_else(|_| BigDecimal::zero())
-        .with_prec(EXACT_PRECISION)
+    let raw = BigDecimal::from_str(&formatted).unwrap_or_else(|_| BigDecimal::zero());
+    let trimmed = raw.with_prec(SAFE_PRECISION);
+    snap_residue_to_zero(trimmed)
+}
+
+/// Collapse sub-`10⁻³⁵` noise to exact zero. Transcendentals over finite-digit
+/// approximations of irrational inputs (canonically `sin_r(pi)`) leak a residue
+/// at the last astro-float bit that users legitimately expect to be zero.
+fn snap_residue_to_zero(value: BigDecimal) -> BigDecimal {
+    if value.is_zero() {
+        return value;
+    }
+    let (_, scale) = value.as_bigint_and_exponent();
+    // `digits()` returns u64 — transcendental outputs never reach 2⁶³ decimal
+    // digits, so `i64::try_from` is infallible in practice; fall back to
+    // `i64::MAX` for the (unreachable) saturation case so the subtraction
+    // doesn't underflow silently.
+    let digits = i64::try_from(value.digits()).unwrap_or(i64::MAX);
+    if scale - digits >= TRIG_ZERO_SNAP_NEG_EXPONENT {
+        BigDecimal::zero()
+    } else {
+        value
+    }
+}
+
+/// Pre-built `10^-32` threshold used as the base of the integer-snap
+/// tolerance. Parsing at program init avoids re-constructing the
+/// `BigDecimal` on every evaluator invocation.
+static COMPOSE_SNAP_BASE: std::sync::LazyLock<BigDecimal> = std::sync::LazyLock::new(|| {
+    BigDecimal::from_str(&format!("1E-{COMPOSE_SNAP_NEG_EXPONENT}"))
+        .expect("compose-snap threshold literal must parse")
+});
+
+/// Snap to the nearest *non-zero* integer when the residue is within ~10⁻³²
+/// of the value's magnitude. Run once at the outermost evaluator output so
+/// composed round-trips like `sqrt(2)^2` (35-digit `sqrt(2)` squared leaks
+/// an `O(10⁻³⁴)` residue around `2`) collapse to the exact integer the
+/// caller expects.
+///
+/// The "non-zero" guard is critical: the nearest integer to any value with
+/// magnitude below 0.5 is `0`, so without the guard this function would
+/// silently absorb user-typed small literals like `1e-50`, `5*1e-100`, and
+/// `(0.001)^50` into an exact zero — mathematically correct answers
+/// replaced with a devastating loss of magnitude. Near-zero residues from
+/// transcendentals (`sin_r(pi) ≈ -2.8e-39`) are already handled upstream by
+/// [`snap_residue_to_zero`] inside [`bf_to_bd`], so skipping the zero case
+/// here doesn't reintroduce the trig round-trip bug.
+fn snap_composed_integer(value: BigDecimal) -> BigDecimal {
+    if value.is_zero() {
+        return value;
+    }
+    let rounded = value.with_scale_round(0, BdRm::HalfEven);
+    if rounded.is_zero() {
+        return value;
+    }
+    let delta = (&value - &rounded).abs();
+    let magnitude = value.abs();
+    let one = BigDecimal::from(1);
+    let scale = if magnitude > one { magnitude } else { one };
+    let threshold = (&*COMPOSE_SNAP_BASE * &scale).with_prec(EXACT_PRECISION);
+    if delta < threshold { rounded } else { value }
 }
 
 fn to_radians(degrees: &BigDecimal, consts: &mut Consts) -> BigFloat {
@@ -224,7 +318,7 @@ fn power_via_bigfloat(
     if out.is_nan() || out.is_inf() {
         return Err(ExpressionError::DomainError {
             op: "pow".into(),
-            value: format!("{}^{}", base.to_plain_string(), exp.to_plain_string()),
+            value: format!("{}^({})", base.to_plain_string(), exp.to_plain_string()),
         });
     }
     Ok(bf_to_bd(&out, consts))
@@ -240,6 +334,13 @@ fn power(
     consts: &mut Consts,
 ) -> Result<BigDecimal, ExpressionError> {
     if let Some(e) = as_nonneg_u32(exp) {
+        // `0⁰ = 1` by the combinatorial convention — matches the `power`
+        // tool, the f64 evaluator, IEEE-754, Python, JavaScript, and every
+        // CAS. `BigDecimal::powi(0)` on a zero base produces `0`, so
+        // short-circuit the `exp == 0` case *before* delegating.
+        if e == 0 {
+            return Ok(BigDecimal::from(1));
+        }
         if integer_power_fits(base, e) {
             return Ok(base.powi(i64::from(e)));
         }
@@ -308,6 +409,20 @@ fn cos_bd(degrees: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, Expre
 
 fn tan_bd(degrees: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
     let rad = to_radians(degrees, consts);
+    // Pre-detect the π/2 + kπ singularity. astro-float's `tan` computes
+    // sin/cos internally, but at 192-bit precision `cos(π/2)` is a tiny
+    // residue (~10⁻⁵⁷), not exact zero — so the division yields a huge
+    // spurious finite value instead of diverging, and `finite_or_domain`
+    // happily passes it. Converting cos through `bf_to_bd` folds its
+    // sub-`10⁻³⁵` residue to zero, which lets us surface the singularity
+    // as a clean `DomainError` the way the dedicated `tan` tool does.
+    let cos_bf = rad.cos(AF_PRECISION, AfRm::ToEven, consts);
+    if bf_to_bd(&cos_bf, consts).is_zero() {
+        return Err(ExpressionError::DomainError {
+            op: "tan".to_string(),
+            value: degrees.to_plain_string(),
+        });
+    }
     let out = rad.tan(AF_PRECISION, AfRm::ToEven, consts);
     finite_or_domain(&out, "tan", degrees)?;
     Ok(bf_to_bd(&out, consts))
@@ -332,6 +447,16 @@ fn cos_rad_bd(radians: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, E
 
 fn tan_rad_bd(radians: &BigDecimal, consts: &mut Consts) -> Result<BigDecimal, ExpressionError> {
     let bf = bd_to_bf(radians, consts);
+    // Same π/2 + kπ singularity guard as the degree variant — see `tan_bd`
+    // for the rationale. Required for `tan_r(pi/2)`, which otherwise
+    // returned ~-7e38 instead of surfacing the vertical asymptote.
+    let cos_bf = bf.cos(AF_PRECISION, AfRm::ToEven, consts);
+    if bf_to_bd(&cos_bf, consts).is_zero() {
+        return Err(ExpressionError::DomainError {
+            op: "tan_r".to_string(),
+            value: radians.to_plain_string(),
+        });
+    }
     let out = bf.tan(AF_PRECISION, AfRm::ToEven, consts);
     finite_or_domain(&out, "tan_r", radians)?;
     Ok(bf_to_bd(&out, consts))
@@ -748,12 +873,20 @@ impl<'a, 'c, S: BuildHasher> Parser<'a, 'c, S> {
 
     fn parse_unary(&mut self) -> Result<BigDecimal, ExpressionError> {
         self.skip_whitespace();
-        if self.current_char() == Some('-') {
-            self.pos += 1;
-            let value = self.parse_unary()?;
-            return Ok(-value);
+        match self.current_char() {
+            Some('-') => {
+                self.pos += 1;
+                let value = self.parse_unary()?;
+                Ok(-value)
+            }
+            // Accept unary plus as a no-op. Symmetric with the f64 evaluator
+            // so `+1` / `+(2*3)` work as expected.
+            Some('+') => {
+                self.pos += 1;
+                self.parse_unary()
+            }
+            _ => self.parse_power(),
         }
-        self.parse_power()
     }
 
     fn parse_primary(&mut self) -> Result<BigDecimal, ExpressionError> {
@@ -1405,5 +1538,129 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("pi".to_string(), "3".to_string());
         assert_eq!(evaluate_with_variables("pi", &vars).unwrap(), "3");
+    }
+
+    #[test]
+    fn trig_radians_at_pi_snaps_to_zero() {
+        assert_eq!(evaluate("sin_r(pi)").unwrap(), "0");
+        assert_eq!(evaluate("tan_r(pi)").unwrap(), "0");
+        assert_eq!(evaluate("sin_r(2*pi)").unwrap(), "0");
+        assert_eq!(evaluate("cos_r(pi/2)").unwrap(), "0");
+    }
+
+    #[test]
+    fn tan_at_vertical_asymptotes_raises_domain_error() {
+        // Regression: astro-float's `.tan()` at π/2 + kπ computes sin/cos
+        // where cos is a tiny residue at 192-bit precision, not exact zero,
+        // so the division yielded a ~10³⁸–10⁵⁷ spurious finite instead of
+        // diverging. Degree and radian variants must both surface the
+        // singularity as a clean `DomainError`, matching the dedicated
+        // `tan` tool's behaviour.
+        for expr in [
+            "tan(90)",
+            "tan(270)",
+            "tan(-90)",
+            "tan(450)",
+            "tan_r(pi/2)",
+            "tan_r(3*pi/2)",
+            "tan_r(-pi/2)",
+        ] {
+            let err = evaluate(expr).unwrap_err();
+            assert!(
+                matches!(err, ExpressionError::DomainError { .. }),
+                "{expr} should surface DomainError, got {err:?}"
+            );
+        }
+        // Non-singular angles still pass through unchanged.
+        assert_eq!(evaluate("tan_r(pi/4)").unwrap(), "1");
+        assert_eq!(evaluate("tan(45)").unwrap(), "1");
+    }
+
+    #[test]
+    fn round_trip_inverse_transcendentals_snap_to_exact() {
+        // sqrt(2)^2, exp(log(5)), log(exp(2)), sqrt(4) — all return the
+        // mathematically exact result after the 35-digit precision trim
+        // absorbs the last-few-digit binary-to-decimal noise.
+        assert_eq!(evaluate("sqrt(2)^2").unwrap(), "2");
+        assert_eq!(evaluate("exp(log(5))").unwrap(), "5");
+        assert_eq!(evaluate("log(exp(2))").unwrap(), "2");
+        assert_eq!(evaluate("sqrt(4)").unwrap(), "2");
+        assert_eq!(evaluate("sqrt(9)").unwrap(), "3");
+    }
+
+    #[test]
+    fn round_trip_preserves_genuinely_irrational_digits() {
+        // After trimming, sqrt(2) still carries a usable 35-sig-digit
+        // expansion. The first 34 decimals from Wikipedia are
+        // `1.4142135623730950488016887242096980`; digit 35 rounds up from
+        // `0…785…` to `1` because HALF_EVEN pulls the next digit (7) up.
+        let out = evaluate("sqrt(2)").unwrap();
+        assert!(
+            out.starts_with("1.414213562373095048801688724209698"),
+            "got {out}"
+        );
+        assert!(out.len() >= 36, "got {out} (expected >=35 sig digits)");
+    }
+
+    #[test]
+    fn trig_degrees_notable_zero_angles_snap() {
+        assert_eq!(evaluate("sin(180)").unwrap(), "0");
+        assert_eq!(evaluate("sin(360)").unwrap(), "0");
+        assert_eq!(evaluate("cos(90)").unwrap(), "0");
+        assert_eq!(evaluate("cos(270)").unwrap(), "0");
+    }
+
+    #[test]
+    fn trig_snap_preserves_genuinely_small_results() {
+        // sin_r(1e-10) ≈ 1e-10, well above the 10⁻³⁵ noise floor.
+        let out = evaluate("sin_r(0.0000000001)").unwrap();
+        assert!(out.ends_with("e-11") || out.ends_with("e-10"), "got {out}");
+        assert!(out.starts_with("9.9"), "got {out}");
+    }
+
+    #[test]
+    fn tiny_literal_values_are_not_snapped_to_zero() {
+        // Regression: the composed-integer snap used to collapse *any* value
+        // that rounded to zero (magnitude < 0.5) because the "nearest
+        // integer" was 0 and the threshold check succeeded. This silently
+        // turned user-typed `1e-50` into `0`, destroying magnitude
+        // information. Tiny legitimate literals must round-trip untouched.
+        assert_eq!(evaluate("1e-50").unwrap(), "1e-50");
+        assert_eq!(evaluate("1e-100").unwrap(), "1e-100");
+        assert_eq!(evaluate("5 * 1e-100").unwrap(), "5e-100");
+    }
+
+    #[test]
+    fn tiny_composed_values_are_not_snapped_to_zero() {
+        // `(0.001)^50 = 1e-150` and `0.00001^10 = 1e-50` come out of the
+        // BigDecimal arithmetic path (integer powers avoid astro-float) and
+        // must preserve their full scale.
+        let out = evaluate("(0.001)^50").unwrap();
+        assert!(out.ends_with("e-150"), "got {out}");
+        let out2 = evaluate("0.00001^10").unwrap();
+        assert!(out2.ends_with("e-50"), "got {out2}");
+    }
+
+    #[test]
+    fn composed_integer_near_miss_still_snaps() {
+        // sqrt(2)^2 ≈ 2 + O(1e-34) from the 35-digit sqrt(2) squared. The
+        // near-integer snap at final output keeps that working even after
+        // the zero-case guard above.
+        assert_eq!(evaluate("sqrt(2)^2").unwrap(), "2");
+        assert_eq!(evaluate("exp(log(5))").unwrap(), "5");
+    }
+
+    #[test]
+    fn power_zero_to_the_zero_is_one() {
+        // Regression: `0^0` used to return `0` here because `BigDecimal::
+        // powi(0)` on a zero base returns zero. The combinatorial
+        // convention (shared by the `power` tool, the f64 evaluator,
+        // IEEE-754, Python, JavaScript, and every CAS) is `1`.
+        assert_eq!(evaluate("0^0").unwrap(), "1");
+        assert_eq!(evaluate("0.0^0").unwrap(), "1");
+        // Non-zero base with exponent 0 already worked.
+        assert_eq!(evaluate("5^0").unwrap(), "1");
+        // Zero base with positive exponent stays at 0.
+        assert_eq!(evaluate("0^5").unwrap(), "0");
     }
 }
