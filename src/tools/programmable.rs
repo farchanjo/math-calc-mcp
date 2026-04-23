@@ -50,7 +50,10 @@ fn truncate_for_detail(raw: &str) -> String {
 }
 
 fn parse_variables_f64(tool: &str, json: &str) -> Result<HashMap<String, f64>, String> {
-    let map: HashMap<String, f64> = serde_json::from_str(json).map_err(|e| {
+    // Accept both numbers and numeric strings so the f64 and exact evaluators
+    // take the same variable shape. Strings like `"3.14"` parse through f64 —
+    // anything else surfaces as PARSE_ERROR with the variable name.
+    let raw: HashMap<String, Value> = serde_json::from_str(json).map_err(|e| {
         error_with_detail(
             tool,
             ErrorCode::ParseError,
@@ -58,10 +61,38 @@ fn parse_variables_f64(tool: &str, json: &str) -> Result<HashMap<String, f64>, S
             &format!("json={}, cause={}", truncate_for_detail(json), e),
         )
     })?;
-    for name in map.keys() {
-        reject_reserved_names(tool, name)?;
+    let mut out = HashMap::with_capacity(raw.len());
+    for (name, value) in raw {
+        reject_reserved_names(tool, &name)?;
+        let parsed = match value {
+            Value::Number(n) => n.as_f64().ok_or_else(|| {
+                error_with_detail(
+                    tool,
+                    ErrorCode::ParseError,
+                    "variable value is not a finite number",
+                    &format!("name={name}"),
+                )
+            })?,
+            Value::String(s) => s.trim().parse::<f64>().map_err(|_| {
+                error_with_detail(
+                    tool,
+                    ErrorCode::ParseError,
+                    "variable value is not a valid number",
+                    &format!("name={name}, value={s}"),
+                )
+            })?,
+            _ => {
+                return Err(error_with_detail(
+                    tool,
+                    ErrorCode::ParseError,
+                    "variable value must be string or number",
+                    &format!("name={name}"),
+                ));
+            }
+        };
+        out.insert(name, parsed);
     }
-    Ok(map)
+    Ok(out)
 }
 
 /// Parse variables JSON where each value must be a string or number. Returns
@@ -254,6 +285,58 @@ mod tests {
             ),
             "got: {out}"
         );
+    }
+
+    #[test]
+    fn eval_vars_accepts_numeric_string() {
+        // Shape parity with the exact evaluator: strings that parse as numbers
+        // are accepted so callers can pass the same JSON to both tools.
+        assert_eq!(
+            evaluate_with_variables("x*2", r#"{"x":"5.5"}"#),
+            "EVALUATE_WITH_VARIABLES: OK | RESULT: 11.0"
+        );
+    }
+
+    #[test]
+    fn eval_vars_rejects_non_numeric_string() {
+        let out = evaluate_with_variables("x+1", r#"{"x":"hello"}"#);
+        assert!(
+            out.starts_with("EVALUATE_WITH_VARIABLES: ERROR\nREASON: [PARSE_ERROR]"),
+            "got: {out}"
+        );
+        assert!(out.contains("value=hello"));
+    }
+
+    // ---- regression: base^frac for negative base is DomainError ----
+
+    #[test]
+    fn evaluate_negative_base_fractional_exp_is_domain_error() {
+        let out = evaluate("(-1)^0.5");
+        assert!(
+            out.starts_with("EVALUATE: ERROR\nREASON: [DOMAIN_ERROR]"),
+            "expected DOMAIN_ERROR, got: {out}"
+        );
+    }
+
+    #[test]
+    fn evaluate_factorial_over_cap_is_out_of_range() {
+        let out = evaluate("factorial(25)");
+        assert!(
+            out.starts_with("EVALUATE: ERROR\nREASON: [OUT_OF_RANGE]"),
+            "expected OUT_OF_RANGE, got: {out}"
+        );
+        assert!(out.contains("op=factorial"));
+        assert!(out.contains("max=20"));
+    }
+
+    #[test]
+    fn evaluate_exact_factorial_over_cap_is_out_of_range() {
+        let out = evaluate_exact("factorial(2000)");
+        assert!(
+            out.starts_with("EVALUATE_EXACT: ERROR\nREASON: [OUT_OF_RANGE]"),
+            "expected OUT_OF_RANGE, got: {out}"
+        );
+        assert!(out.contains("max=1000"));
     }
 
     #[test]

@@ -465,13 +465,22 @@ fn factorial_bd(value: &BigDecimal) -> Result<BigDecimal, ExpressionError> {
             value: value.to_plain_string(),
         });
     }
-    let n = value.to_u32().ok_or_else(|| ExpressionError::DomainError {
+    // Integer-in-range but above the 1000 cap is `OutOfRange`, not `Overflow`.
+    // Overflow is reserved for results that actually leave the arithmetic
+    // universe (e.g. f64 +Inf); factorial(2000) is well-defined — we just
+    // refuse to compute it.
+    let n = value.to_u32().ok_or_else(|| ExpressionError::OutOfRange {
         op: "factorial".into(),
         value: value.to_plain_string(),
+        min: "0".into(),
+        max: "1000".into(),
     })?;
     if n > 1000 {
-        return Err(ExpressionError::Overflow {
+        return Err(ExpressionError::OutOfRange {
             op: "factorial".into(),
+            value: value.to_plain_string(),
+            min: "0".into(),
+            max: "1000".into(),
         });
     }
     let mut acc = BigDecimal::from(1);

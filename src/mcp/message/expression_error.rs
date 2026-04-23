@@ -10,7 +10,15 @@ use crate::engine::expression::ExpressionError;
 /// Produce the envelope string for `err`, scoped to the given tool name.
 #[must_use]
 pub fn expression_error_envelope(tool: &str, err: &ExpressionError) -> String {
-    let (code, reason, detail): (ErrorCode, &str, Option<String>) = match err {
+    let (code, reason, detail) = classify(err);
+    detail.map_or_else(
+        || error(tool, code, reason),
+        |d| error_with_detail(tool, code, reason, &d),
+    )
+}
+
+fn classify(err: &ExpressionError) -> (ErrorCode, &'static str, Option<String>) {
+    match err {
         ExpressionError::Empty => (
             ErrorCode::InvalidInput,
             "expression must not be blank",
@@ -59,11 +67,17 @@ pub fn expression_error_envelope(tool: &str, err: &ExpressionError) -> String {
             "arithmetic result exceeds the supported range",
             Some(format!("op={op}")),
         ),
-    };
-    detail.map_or_else(
-        || error(tool, code, reason),
-        |d| error_with_detail(tool, code, reason, &d),
-    )
+        ExpressionError::OutOfRange {
+            op,
+            value,
+            min,
+            max,
+        } => (
+            ErrorCode::OutOfRange,
+            "argument is outside the supported range",
+            Some(format!("op={op}, value={value}, min={min}, max={max}")),
+        ),
+    }
 }
 
 #[cfg(test)]

@@ -80,6 +80,21 @@ pub enum ExpressionError {
         /// Operator that produced the non-finite result (`+`, `-`, `*`, `/`, `^`).
         op: String,
     },
+    /// A callable's argument was outside its supported integer window (e.g.
+    /// `factorial(25)` against the 20-wide cap). Distinct from `DomainError`
+    /// (mathematical undefined input) so callers see `OUT_OF_RANGE` rather
+    /// than "undefined for this input".
+    #[error("Argument out of range in {op}: value={value} (valid {min}..={max})")]
+    OutOfRange {
+        /// Operation name (`factorial`, …).
+        op: String,
+        /// String representation of the offending input.
+        value: String,
+        /// Lower bound (inclusive).
+        min: String,
+        /// Upper bound (inclusive).
+        max: String,
+    },
 }
 
 /// Evaluates a mathematical expression without variables.
@@ -244,6 +259,14 @@ impl<'a, S: BuildHasher> Parser<'a, S> {
             // generic overflow that would otherwise come out of powf → +inf.
             if base == 0.0 && exponent < 0.0 {
                 return Err(ExpressionError::DivisionByZero);
+            }
+            // (-x)^frac is complex, not overflow. Map to DomainError so the
+            // reply matches the dedicated `sqrt(-1)`/`pow(-2, 0.5)` paths.
+            if base < 0.0 && exponent.is_finite() && exponent.fract() != 0.0 {
+                return Err(ExpressionError::DomainError {
+                    op: "^".into(),
+                    value: format!("{}, {}", format_arg(base), format_arg(exponent)),
+                });
             }
             Self::check_finite(base.powf(exponent), "^")
         } else {
@@ -691,14 +714,22 @@ fn guard_finite(value: f64, op: &str) -> Result<f64, ExpressionError> {
 }
 
 fn factorial_f64(value: f64) -> Result<f64, ExpressionError> {
-    // Keep the factorial limit aligned with the dedicated `factorial` MCP
-    // tool (0..=20) so `evaluate("factorial(n)")` and `factorial(n)` agree
-    // on what values are "valid". Beyond 20 f64 silently loses precision
-    // anyway, so exposing the 170-wide window was misleading.
-    if value.fract() != 0.0 || !(0.0..=20.0).contains(&value) {
+    // Non-integer / non-real input is a DomainError — the value is outside the
+    // mathematical definition of factorial. Integer inputs outside 0..=20 are
+    // OutOfRange — legal mathematically, but f64 loses precision past 20! so
+    // we cap to match the dedicated `factorial` MCP tool.
+    if value.fract() != 0.0 || !value.is_finite() || value.is_sign_negative() && value != 0.0 {
         return Err(ExpressionError::DomainError {
             op: "factorial".into(),
             value: format_arg(value),
+        });
+    }
+    if !(0.0..=20.0).contains(&value) {
+        return Err(ExpressionError::OutOfRange {
+            op: "factorial".into(),
+            value: format_arg(value),
+            min: "0".into(),
+            max: "20".into(),
         });
     }
     // 170! fits in f64; 171! overflows to +Inf.
