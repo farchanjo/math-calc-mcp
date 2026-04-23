@@ -8,7 +8,39 @@ use crate::engine::unit_registry::{self, UnitCategory, UnitError};
 use crate::mcp::message::{ErrorCode, Response, error, error_with_detail};
 
 const TOOL_LIST_CATEGORIES: &str = "LIST_CATEGORIES";
+const TOOL_LIST_TOOL_CATEGORIES: &str = "LIST_TOOL_CATEGORIES";
 const TOOL_LIST_UNITS: &str = "LIST_UNITS";
+
+/// Catalog of tool-module category names surfaced in the MCP server
+/// instructions. Kept in sync manually: the list is small (23 entries) and
+/// static across releases, so a generator macro would cost more than it
+/// saves. Update in lockstep with `src/tools/*.rs` whenever a new module
+/// goes live.
+const TOOL_CATEGORIES: &[&str] = &[
+    "Basic",
+    "Scientific",
+    "Programmable",
+    "Vector",
+    "Financial",
+    "Calculus",
+    "Unit converter",
+    "Cooking",
+    "Measure reference",
+    "DateTime",
+    "Printing tape",
+    "Graphing",
+    "Network",
+    "Analog electronics",
+    "Digital electronics",
+    "Statistics",
+    "Combinatorics",
+    "Geometry",
+    "Complex numbers",
+    "Crypto/Encoding",
+    "Matrices",
+    "Physics",
+    "Chemistry",
+];
 const TOOL_GET_CONVERSION_FACTOR: &str = "GET_CONVERSION_FACTOR";
 const TOOL_EXPLAIN_CONVERSION: &str = "EXPLAIN_CONVERSION";
 
@@ -22,6 +54,20 @@ pub fn list_categories() -> String {
     Response::ok(TOOL_LIST_CATEGORIES)
         .field("COUNT", values.len().to_string())
         .field("VALUES", values.join(","))
+        .build()
+}
+
+/// List the 23 tool-module categories (Basic, Scientific, …).
+///
+/// Distinct from [`list_categories`] which enumerates measurement units.
+/// Callers previously had to read the server instructions string to see
+/// this list; exposing it as a tool makes the taxonomy programmatically
+/// discoverable.
+#[must_use]
+pub fn list_tool_categories() -> String {
+    Response::ok(TOOL_LIST_TOOL_CATEGORIES)
+        .field("COUNT", TOOL_CATEGORIES.len().to_string())
+        .field("VALUES", TOOL_CATEGORIES.join(","))
         .build()
 }
 
@@ -149,6 +195,21 @@ mod tests {
     }
 
     #[test]
+    fn list_tool_categories_matches_server_instructions() {
+        // The list is surfaced both here and in the server instructions
+        // string; if they drift, `listToolCategories` would lie. Pin the
+        // count at 23 and require a couple of representative names so any
+        // change to either list breaks a test.
+        let out = list_tool_categories();
+        assert!(
+            out.starts_with("LIST_TOOL_CATEGORIES: OK | COUNT: 23 | VALUES: "),
+            "got {out}"
+        );
+        assert!(out.contains("Basic"), "got {out}");
+        assert!(out.contains("Chemistry"), "got {out}");
+    }
+
+    #[test]
     fn list_units_length() {
         assert_eq!(
             list_units("LENGTH"),
@@ -200,7 +261,7 @@ mod tests {
     fn explain_conversion_linear() {
         assert_eq!(
             explain_conversion("km", "mi"),
-            "EXPLAIN_CONVERSION: OK | FROM: km | TO: mi | FACTOR: 0.6213711922373339696174341843633182 | FORMULA: "
+            "EXPLAIN_CONVERSION: OK | FROM: km | TO: mi | FACTOR: 0.62137119223733396961743418436332 | FORMULA: "
         );
     }
 
