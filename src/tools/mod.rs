@@ -19,6 +19,7 @@ pub mod graphing;
 pub mod matrices;
 pub mod measure_reference;
 pub mod network;
+pub mod numeric;
 pub mod physics;
 pub mod printing;
 pub mod programmable;
