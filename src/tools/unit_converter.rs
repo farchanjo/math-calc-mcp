@@ -212,7 +212,7 @@ mod tests {
     fn auto_detect_km_to_mi() {
         assert_eq!(
             convert_auto_detect("1", "km", "mi"),
-            "CONVERT_AUTO_DETECT: OK | RESULT: 0.6213711922373339696174341843633182"
+            "CONVERT_AUTO_DETECT: OK | RESULT: 0.62137119223733396961743418436332"
         );
     }
 

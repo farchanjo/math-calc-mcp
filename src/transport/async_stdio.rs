@@ -240,11 +240,10 @@ mod unix {
             (reader, writer)
         }
 
-        /// The pipe test leaks fds intentionally — our `BorrowedFd` must not
-        /// close them, and each test gets a fresh pair. The kernel cleans up
-        /// at process exit.
-        #[allow(dead_code)]
-        const _FD_LEAK_ACKNOWLEDGED: () = ();
+        // NOTE on fd lifetime: the pipe tests leak the fd pair intentionally.
+        // Our `BorrowedFd` must not close them, each test gets a fresh pair,
+        // and the kernel cleans up at process exit. No sentinel constant is
+        // needed to document this — the comment is the documentation.
 
         #[tokio::test]
         async fn roundtrip_short_message() {
