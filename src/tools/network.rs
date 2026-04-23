@@ -489,8 +489,12 @@ fn subnet_v4(address: &str, cidr: i32) -> String {
     let network = ip_val & mask;
     let wildcard = !mask & 0xFFFF_FFFF_i64;
     let broadcast = network | wildcard;
+    // /32 is a single host — the address itself is the only member and it is
+    // usable. The legacy "subtract network + broadcast" rule only applies to
+    // /0..=/30 where both boundaries are reserved; /31 and /32 are special
+    // (RFC 3021 and "host route" respectively). Mirrors the IPv6 /128 case.
     let (first_host, last_host, usable_hosts) = if cidr == IPV4_BITS {
-        (network, network, 0_i64)
+        (network, network, 1_i64)
     } else if cidr == CIDR_31 {
         (network, broadcast, 2_i64)
     } else {
@@ -1327,6 +1331,17 @@ mod tests {
             subnet_calculator("10.0.0.0", 31),
             "SUBNET_CALCULATOR: OK | NETWORK: 10.0.0.0 | BROADCAST: 10.0.0.1 | MASK: 255.255.255.254 | WILDCARD: 0.0.0.1 | FIRST_HOST: 10.0.0.0 | LAST_HOST: 10.0.0.1 | USABLE_HOSTS: 2 | IP_CLASS: A"
         );
+    }
+
+    #[test]
+    fn subnet_calc_cidr_32_host_route() {
+        // /32 names one address, which is itself usable — mirrors the
+        // corrected IPv6 /128 semantic and keeps "0 hosts" off the table
+        // for a single-host declaration.
+        let out = subnet_calculator("10.0.0.5", 32);
+        assert!(out.contains("USABLE_HOSTS: 1"), "got: {out}");
+        assert!(out.contains("FIRST_HOST: 10.0.0.5"));
+        assert!(out.contains("LAST_HOST: 10.0.0.5"));
     }
 
     #[test]
