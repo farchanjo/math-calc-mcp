@@ -654,6 +654,41 @@ fn call_round_root_sign(name: &str, args: &[f64]) -> Result<f64, ExpressionError
     }
 }
 
+/// `hypot(x1, x2, …, xn) = sqrt(x1² + … + xn²)` for any `n ≥ 2`.
+/// The two-arg form matches `f64::hypot`; higher arities give Euclidean
+/// distance in higher dimensions without callers chaining manually.
+fn variadic_hypot(args: &[f64]) -> Result<f64, ExpressionError> {
+    if args.len() < 2 {
+        return Err(ExpressionError::DomainError {
+            op: "hypot".into(),
+            value: format!("arity={}, expected>=2", args.len()),
+        });
+    }
+    let sum_of_squares: f64 = args.iter().map(|v| v * v).sum();
+    guard_finite(sum_of_squares.sqrt(), "hypot")
+}
+
+/// Fold a binary integer operation (`gcd`/`lcm`) over 2+ arguments.
+/// Both operations are associative-commutative, so left-fold is correct
+/// and no bracketing convention leaks through to the caller.
+fn variadic_integer_fold(
+    args: &[f64],
+    op: &'static str,
+    f: fn(u64, u64) -> u64,
+) -> Result<f64, ExpressionError> {
+    if args.len() < 2 {
+        return Err(ExpressionError::DomainError {
+            op: op.into(),
+            value: format!("arity={}, expected>=2", args.len()),
+        });
+    }
+    let mut acc = integer_binop(args[0], args[1], op, f)?;
+    for &next in &args[2..] {
+        acc = integer_binop(acc, next, op, f)?;
+    }
+    Ok(acc)
+}
+
 fn call_multi_arg(name: &str, args: &[f64]) -> Result<f64, ExpressionError> {
     match name {
         "factorial" => {
@@ -685,22 +720,13 @@ fn call_multi_arg(name: &str, args: &[f64]) -> Result<f64, ExpressionError> {
             }
             Ok(args[0] % args[1])
         }
-        "hypot" => {
-            check_arity(args, 2, "hypot")?;
-            Ok(args[0].hypot(args[1]))
-        }
+        "hypot" => variadic_hypot(args),
         "pow" => {
             check_arity(args, 2, "pow")?;
             guard_finite(args[0].powf(args[1]), "pow")
         }
-        "gcd" => {
-            check_arity(args, 2, "gcd")?;
-            integer_binop(args[0], args[1], "gcd", gcd_u64)
-        }
-        "lcm" => {
-            check_arity(args, 2, "lcm")?;
-            integer_binop(args[0], args[1], "lcm", lcm_u64)
-        }
+        "gcd" => variadic_integer_fold(args, "gcd", gcd_u64),
+        "lcm" => variadic_integer_fold(args, "lcm", lcm_u64),
         _ => Err(ExpressionError::UnknownFunction(name.to_string())),
     }
 }

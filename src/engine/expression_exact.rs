@@ -603,6 +603,49 @@ fn hypot_bd(
     sqrt_bd(&sq, consts)
 }
 
+/// `hypot(x1, x2, …, xn) = sqrt(sum(xi²))`. Matches the f64 evaluator —
+/// binary hypot stays exact via `hypot_bd`, higher arities fold the squares
+/// first and take one `sqrt` at the end to avoid accumulated rounding.
+fn hypot_variadic_bd(
+    args: &[BigDecimal],
+    consts: &mut Consts,
+) -> Result<BigDecimal, ExpressionError> {
+    if args.len() < 2 {
+        return Err(ExpressionError::DomainError {
+            op: "hypot".into(),
+            value: format!("arity={}, expected>=2", args.len()),
+        });
+    }
+    if args.len() == 2 {
+        return hypot_bd(&args[0], &args[1], consts);
+    }
+    let mut sum = BigDecimal::from(0);
+    for v in args {
+        sum = &sum + &(v * v);
+    }
+    sqrt_bd(&sum, consts)
+}
+
+/// Fold a binary integer operation (`gcd`/`lcm`) over 2+ arguments in the
+/// exact evaluator. Mirrors `variadic_integer_fold` in the f64 parser.
+fn integer_fold_bd(
+    args: &[BigDecimal],
+    op: &'static str,
+    f: fn(u64, u64) -> u64,
+) -> Result<BigDecimal, ExpressionError> {
+    if args.len() < 2 {
+        return Err(ExpressionError::DomainError {
+            op: op.into(),
+            value: format!("arity={}, expected>=2", args.len()),
+        });
+    }
+    let mut acc = integer_binop_bd(&args[0], &args[1], op, f)?;
+    for next in &args[2..] {
+        acc = integer_binop_bd(&acc, next, op, f)?;
+    }
+    Ok(acc)
+}
+
 // --------------------------------------------------------------------------- //
 //  Recursive-descent parser
 // --------------------------------------------------------------------------- //
@@ -1030,22 +1073,13 @@ impl<'a, 'c, S: BuildHasher> Parser<'a, 'c, S> {
                 check_arity_bd(args, 2, "mod")?;
                 modulo(&args[0], &args[1])
             }
-            "hypot" => {
-                check_arity_bd(args, 2, "hypot")?;
-                hypot_bd(&args[0], &args[1], self.consts)
-            }
+            "hypot" => hypot_variadic_bd(args, self.consts),
             "pow" => {
                 check_arity_bd(args, 2, "pow")?;
                 power(&args[0], &args[1], self.consts)
             }
-            "gcd" => {
-                check_arity_bd(args, 2, "gcd")?;
-                integer_binop_bd(&args[0], &args[1], "gcd", gcd_u64)
-            }
-            "lcm" => {
-                check_arity_bd(args, 2, "lcm")?;
-                integer_binop_bd(&args[0], &args[1], "lcm", lcm_u64)
-            }
+            "gcd" => integer_fold_bd(args, "gcd", gcd_u64),
+            "lcm" => integer_fold_bd(args, "lcm", lcm_u64),
             _ => Err(ExpressionError::UnknownFunction(name.to_string())),
         }
     }
