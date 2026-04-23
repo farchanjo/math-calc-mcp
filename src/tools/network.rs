@@ -177,7 +177,27 @@ pub fn decimal_to_ip(decimal: &str, version: i32) -> String {
 /// Test whether an IP address is within the given subnet.
 #[must_use]
 pub fn ip_in_subnet(address: &str, network: &str, cidr: i32) -> String {
-    let inside = if is_ipv6(address) {
+    // Dispatch by *address* family, but diagnose family mismatch up front —
+    // otherwise a v6 address against a v4 network would parrot "address is
+    // not a valid IPv6 address" (on the network input it just routed to),
+    // which misleads the caller about which field is wrong.
+    let addr_v6 = is_ipv6(address);
+    let net_v6 = is_ipv6(network);
+    if addr_v6 != net_v6 {
+        return error_with_detail(
+            IP_IN_SUBNET,
+            ErrorCode::InvalidInput,
+            "address and network must be the same IP family",
+            &format!(
+                "address={} ({}), network={} ({})",
+                address,
+                if addr_v6 { "IPv6" } else { "IPv4" },
+                network,
+                if net_v6 { "IPv6" } else { "IPv4" },
+            ),
+        );
+    }
+    let inside = if addr_v6 {
         check_ipv6_in_subnet(address, network, cidr)
     } else {
         check_ipv4_in_subnet(address, network, cidr)
@@ -1382,6 +1402,18 @@ mod tests {
             ip_in_subnet("2001:dc8::1", "2001:db8::", 64),
             "IP_IN_SUBNET: OK | IN_SUBNET: false"
         );
+    }
+
+    #[test]
+    fn ip_in_subnet_family_mismatch_is_explicit() {
+        // IPv6 address against IPv4 network used to error with
+        // "address is not a valid IPv6 address" on the *network* field,
+        // which blamed the wrong input. Now reports the mismatch directly.
+        let out = ip_in_subnet("2001:db8::1", "192.168.0.0", 24);
+        assert!(out.starts_with("IP_IN_SUBNET: ERROR"));
+        assert!(out.contains("INVALID_INPUT"));
+        assert!(out.contains("same IP family"));
+        assert!(out.contains("IPv6") && out.contains("IPv4"));
     }
 
     #[test]
