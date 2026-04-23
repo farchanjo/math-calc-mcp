@@ -23,11 +23,14 @@ const TOOL_AMORTIZATION_SCHEDULE: &str = "AMORTIZATION_SCHEDULE";
 
 const DISPLAY_SCALE: i64 = 2;
 const MONTHS_PER_YEAR: i64 = 12;
-/// Upper bound on rows rendered in the amortization table. 600 months = 50
-/// years, which already exceeds every mortgage class in common use (40y max in
-/// JP/US/EU). Uncapped output previously blew past 100 KB for 100-year
-/// schedules, enough to flood an LLM's context.
-const MAX_AMORTIZATION_MONTHS: i64 = 600;
+/// Upper bound on rows rendered in the amortization table. 480 months = 40
+/// years, which covers every mortgage class in common use (40y is the
+/// longest term issued in JP/US/EU). An earlier 600-month cap was enough
+/// for 50y loans but could push the rendered response past the MCP token
+/// limit — a 50y/100% test produced ~52 KB which was rejected by the
+/// client. 480 rows stays under 40 KB while still allowing 40-year
+/// mortgages. Longer schedules must be split by the caller.
+const MAX_AMORTIZATION_MONTHS: i64 = 480;
 
 /// DECIMAL128 context: 34 significant digits with `HALF_UP` rounding.
 fn decimal128_ctx() -> Context {
@@ -290,7 +293,9 @@ pub fn present_value(future_value: &str, annual_rate: &str, years: &str) -> Stri
         Err(e) => return e,
     };
 
-    if let Err(e) = require_positive(tool, &future_val, "future value", "futureValue") {
+    // `fv=0` gives `PV = 0 / (1+r)^t = 0` — a trivially valid identity.
+    // Accept it so scenario tables with zero future payoffs don't fail.
+    if let Err(e) = require_non_negative(tool, &future_val, "future value", "futureValue") {
         return e;
     }
     if let Err(e) = require_non_negative(tool, &rate, "annual rate", "annualRate") {
@@ -826,25 +831,28 @@ ROW_12: month=12 | payment=100.00 | principal=100.00 | interest=0.00 | balance=0
     #[test]
     fn amortization_schedule_rejects_schedule_beyond_cap() {
         // 100 years × 12 = 1200 months — far beyond any real mortgage term.
-        // Uncapped, the render exceeds 100 KB and blew past LLM context
-        // budgets; the tool must refuse before generating the rows.
+        // Uncapped, the render exceeds the MCP token limit; the tool must
+        // refuse before generating the rows.
         let out = amortization_schedule("1000", "5", "100");
         assert!(
             out.starts_with("AMORTIZATION_SCHEDULE: ERROR"),
             "expected ERROR, got: {out}"
         );
         assert!(out.contains("OUT_OF_RANGE"));
-        assert!(out.contains("max=600"));
+        assert!(out.contains("max=480"));
     }
 
     #[test]
-    fn amortization_schedule_accepts_50_year_mortgage() {
-        // 50 years is the cap (600 months) — must still render successfully.
-        let out = amortization_schedule("100000", "5", "50");
+    fn amortization_schedule_accepts_40_year_mortgage() {
+        // 40 years is the cap (480 months) — covers every mortgage class in
+        // common use. A 50-year/100% test previously produced ~52 KB which
+        // exceeded the MCP client token limit; the tighter 480-month cap
+        // keeps the response under 40 KB.
+        let out = amortization_schedule("100000", "5", "40");
         assert!(
             out.starts_with("AMORTIZATION_SCHEDULE: OK"),
             "expected OK at cap, got: {out}"
         );
-        assert!(out.contains("MONTHS: 600"));
+        assert!(out.contains("MONTHS: 480"));
     }
 }
