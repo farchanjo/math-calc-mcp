@@ -278,6 +278,12 @@ def test_basic(r: TestRunner) -> None:
             lambda v: envelope_result(v, "DIVIDE") == "3.33333333333333333333")
     r.check("power", "2^10", c("power", {"base": "2", "exponent": "10"}),
             lambda v: envelope_result(v, "POWER") == "1024")
+    # Negative exponents delegate to the exact evaluator — `2^-3 = 0.125`.
+    r.check("power", "2^-3 via exact fallback", c("power", {"base": "2", "exponent": "-3"}),
+            lambda v: envelope_result(v, "POWER") == "0.125")
+    # Fractional exponents likewise use the 128-bit exact evaluator.
+    r.check("power", "2^0.5 via exact fallback", c("power", {"base": "2", "exponent": "0.5"}),
+            lambda v: envelope_result(v, "POWER").startswith("1.41421356237"))
     r.check("modulo", "10 %% 3", c("modulo", {"first": "10", "second": "3"}),
             lambda v: envelope_result(v, "MODULO") == "1")
     r.check("abs", "-5", c("abs", {"value": "-5"}),
@@ -387,6 +393,15 @@ def test_financial(r: TestRunner) -> None:
             detail_render=lambda v: f"header_ok={envelope_ok(v, 'AMORTIZATION_SCHEDULE')}, "
                                     f"row_1={envelope_field(v, 'ROW_1')!s:.60}")
 
+    # Regression: the schedule must refuse terms that would exceed 480 months
+    # (40-year cap) — a 50y run at 100% previously produced ~52 KB of output
+    # that exceeded the MCP client token limit.
+    r.check("amortizationSchedule", "50y exceeds 480-month cap",
+            c("amortizationSchedule", {"principal": "1000",
+                                       "annualRate": "5", "years": "50"}),
+            lambda v: envelope_error(v, "AMORTIZATION_SCHEDULE", "OUT_OF_RANGE")
+            and "max=480" in v)
+
     # Regression: financial error envelopes must now use lowercase reason text
     # and camelCase DETAIL keys (previously "Principal" / "annual rate=-5").
     r.check("compoundInterest", "negative principal -> lowercase + detail",
@@ -415,11 +430,14 @@ def test_calculus(r: TestRunner) -> None:
         "expression": "x^2", "variable": "x", "point": 3.0
     }), lambda v: TestRunner.close(envelope_result(v, "DERIVATIVE"), 6.0, 1e-4))
     # Regression: calculus error envelopes must match the normalized format
-    # used by programmable (lowercase reason + DETAIL line).
+    # used by programmable (lowercase reason + DETAIL line). The tool layer
+    # rewrites UnknownVariable when the expression uses a name other than the
+    # declared variable — surfacing the real cause instead of the raw
+    # evaluator's `name=<other>` suffix.
     r.check("derivative", "unknown var -> normalized envelope",
             c("derivative", {"expression": "y + 1", "variable": "x", "point": 0.0}),
             lambda v: envelope_error(v, "DERIVATIVE", "UNKNOWN_VARIABLE")
-                      and envelope_field(v, "DETAIL") == "name=y")
+                      and envelope_field(v, "DETAIL") == "found=y, declared=x")
     r.check("nthDerivative", "x^3 n=2 at 2", c("nthDerivative", {
         "expression": "x^3", "variable": "x", "point": 2.0, "order": 2
     }), lambda v: TestRunner.close(envelope_result(v, "NTH_DERIVATIVE"), 12.0, 1e-2))
@@ -465,6 +483,13 @@ def test_unit_converter(r: TestRunner) -> None:
     r.check("convertAutoDetect", "100c->f", c("convertAutoDetect", {
         "value": "100", "fromUnit": "c", "toUnit": "f"
     }), lambda v: TestRunner.close(envelope_result(v, "CONVERT_AUTO_DETECT"), 212.0, 1e-6))
+
+    # Regression: `B` is the SI symbol for byte. Users writing `KB` / `MB`
+    # / `GB` expect a standalone `B` to resolve to byte; a missing alias
+    # surprised callers with `unit is not a recognized unit`.
+    r.check("convertAutoDetect", "KB -> B alias to byte",
+            c("convertAutoDetect", {"value": "1", "fromUnit": "KB", "toUnit": "B"}),
+            lambda v: TestRunner.close(envelope_result(v, "CONVERT_AUTO_DETECT"), 1000.0, 1e-6))
 
     # Regression: physical quantities (length, mass, volume, area, density,
     # time, data storage/rate, frequency, R/L/C) must reject negatives.
@@ -540,7 +565,7 @@ def test_cooking(r: TestRunner) -> None:
 
 
 def test_measure_reference(r: TestRunner) -> None:
-    r.category("measure reference", 4)
+    r.category("measure reference", 5)
     c = r.client.call
     cats = c("listCategories", {})
     r.check("listCategories", "", cats,
@@ -549,6 +574,15 @@ def test_measure_reference(r: TestRunner) -> None:
                  or envelope_field(v, "RESULT") is not None),
             detail_render=lambda v: f"count={envelope_field(v, 'COUNT')}, "
                                     f"result={envelope_field(v, 'RESULT')!s:.60}")
+
+    # Tool-module categories (23) — distinct from the 21 measurement-unit
+    # categories above. This tool was added so callers can discover the
+    # taxonomy programmatically instead of parsing the server-info string.
+    tool_cats = c("listToolCategories", {})
+    r.check("listToolCategories", "", tool_cats,
+            lambda v: envelope_ok(v, "LIST_TOOL_CATEGORIES")
+            and envelope_field(v, "COUNT") == "23"
+            and "Basic" in (envelope_field(v, "VALUES") or ""))
 
     units = c("listUnits", {"category": "LENGTH"})
     r.check("listUnits", "LENGTH", units,
@@ -749,6 +783,13 @@ def test_network(r: TestRunner) -> None:
     r.check("expandIpv6", "::1", c("expandIpv6", {"address": "::1"}),
             lambda v: envelope_result(v, "EXPAND_IPV6")
             == "0000:0000:0000:0000:0000:0000:0000:0001")
+
+    # RFC 4291 §2.5.5.2 IPv4-mapped form: the embedded v4 tail must stay
+    # dotted so the original address is readable (`c0a8:0101` obscures it).
+    r.check("expandIpv6", "v4-mapped keeps dotted quad",
+            c("expandIpv6", {"address": "::ffff:192.168.1.1"}),
+            lambda v: envelope_result(v, "EXPAND_IPV6")
+            == "0000:0000:0000:0000:0000:ffff:192.168.1.1")
 
     r.check("compressIpv6", "2001:db8::1", c("compressIpv6", {
         "address": "2001:0db8:0000:0000:0000:0000:0000:0001"
@@ -1189,6 +1230,10 @@ def test_combinatorics(r: TestRunner) -> None:
             lambda v: envelope_result(v, "NEXT_PRIME") == "11")
     r.check("primeFactors", "12", c("primeFactors", {"n": 12}),
             lambda v: envelope_ok(v, "PRIME_FACTORS") and envelope_field(v, "FACTORS") == "2,2,3")
+    # The empty product represents the prime factorization of 1 — COUNT 0, no
+    # FACTORS, matching the convention used by eulerTotient(1).
+    r.check("primeFactors", "1 is empty product", c("primeFactors", {"n": 1}),
+            lambda v: envelope_ok(v, "PRIME_FACTORS") and envelope_field(v, "COUNT") == "0")
     r.check("eulerTotient", "φ(10)", c("eulerTotient", {"n": 10}),
             lambda v: envelope_result(v, "EULER_TOTIENT") == "4")
 
@@ -1268,6 +1313,12 @@ def test_complex(r: TestRunner) -> None:
     r.check("polarToRect", "r=2,θ=90°", c("polarToRect", {"magnitude": "2", "angleDegrees": "90"}),
             lambda v: envelope_ok(v, "POLAR_TO_RECT")
             and TestRunner.close(envelope_field(v, "IMAG"), 2.0, 1e-9))
+    # Regression: f64 cos(60°) drifts to 0.5000000000000001; the
+    # 15-sig-digit snap restores the exact 0.5 decimal a student expects.
+    r.check("polarToRect", "r=1,θ=60° snaps clean half",
+            c("polarToRect", {"magnitude": "1", "angleDegrees": "60"}),
+            lambda v: envelope_ok(v, "POLAR_TO_RECT")
+            and envelope_field(v, "REAL") == "0.5")
     r.check("rectToPolar", "2i", c("rectToPolar", {"z": "0,2"}),
             lambda v: envelope_ok(v, "RECT_TO_POLAR")
             and TestRunner.close(envelope_field(v, "MAGNITUDE"), 2.0))
@@ -1305,6 +1356,16 @@ def test_crypto(r: TestRunner) -> None:
             lambda v: envelope_result(v, "URL_ENCODE") == "hello%20world%21")
     r.check("urlDecode", "encoded", c("urlDecode", {"input": "hello%20world%21"}),
             lambda v: envelope_result(v, "URL_DECODE") == "hello world!")
+    # Form-encoded `+` must decode to space — matches WHATWG / every
+    # mainstream decoder (Python unquote_plus, Java URLDecoder, …). A
+    # decoder that leaves `+` literal silently corrupts real form payloads.
+    r.check("urlDecode", "form-encoded + becomes space",
+            c("urlDecode", {"input": "hello+world"}),
+            lambda v: envelope_result(v, "URL_DECODE") == "hello world")
+    # Escaped `%2B` preserves a literal `+` in the decoded output.
+    r.check("urlDecode", "%2B preserves literal +",
+            c("urlDecode", {"input": "a%2Bb"}),
+            lambda v: envelope_result(v, "URL_DECODE") == "a+b")
 
     r.check("hexEncode", "ABC", c("hexEncode", {"input": "ABC"}),
             lambda v: envelope_result(v, "HEX_ENCODE") == "414243")
@@ -1346,6 +1407,16 @@ def test_matrices(r: TestRunner) -> None:
     r.check("gaussianElimination", "2x3 system", c("gaussianElimination", {"coefficients": "1,1,3;2,3,8"}),
             lambda v: envelope_ok(v, "GAUSSIAN_ELIMINATION")
             and envelope_field(v, "SOLUTION") == "1.0,2.0")
+    # x+y=1, 2x+2y=3 → rank(A)=1, rank(A|b)=2 → inconsistent (no solution).
+    r.check("gaussianElimination", "inconsistent system",
+            c("gaussianElimination", {"coefficients": "1,1,1;2,2,3"}),
+            lambda v: envelope_error(v, "GAUSSIAN_ELIMINATION", "DOMAIN_ERROR")
+            and "inconsistent" in v.lower())
+    # x+y=1, 2x+2y=2 → rank(A)=rank(A|b)=1 → underdetermined (infinite).
+    r.check("gaussianElimination", "underdetermined system",
+            c("gaussianElimination", {"coefficients": "1,1,1;2,2,2"}),
+            lambda v: envelope_error(v, "GAUSSIAN_ELIMINATION", "DOMAIN_ERROR")
+            and "underdetermined" in v.lower())
 
 
 # --------------------------------------------------------------------------- #
@@ -1364,6 +1435,17 @@ def test_physics(r: TestRunner) -> None:
             and TestRunner.close(envelope_field(v, "FINAL_VELOCITY"), 20.0)
             and TestRunner.close(envelope_field(v, "DISPLACEMENT"), 20.0))
 
+    # Regression: the f64 path used to return `0.1899999999999995` for the
+    # textbook `v0=10, a=-9.81, t=1` (fma rounds 10 + -9.81 one ULP low).
+    # The BigDecimal recomputation preserves the caller's decimal
+    # precision so the response matches what a student would write.
+    r.check("kinematics", "v0=10,a=-9.81,t=1 (no f64 drift)",
+            c("kinematics",
+              {"initialVelocity": "10", "acceleration": "-9.81", "time": "1"}),
+            lambda v: envelope_ok(v, "KINEMATICS")
+            and envelope_field(v, "FINAL_VELOCITY") == "0.19"
+            and envelope_field(v, "DISPLACEMENT") == "5.095")
+
     r.check("projectileMotion", "v=10,θ=45,g=9.81",
             c("projectileMotion", {"speed": "10", "angleDegrees": "45", "gravity": "9.81"}),
             lambda v: envelope_ok(v, "PROJECTILE_MOTION")
@@ -1374,7 +1456,7 @@ def test_physics(r: TestRunner) -> None:
 
     r.check("gravitationalForce", "unit masses 1m",
             c("gravitationalForce", {"m1": "1", "m2": "1", "distance": "1"}),
-            lambda v: TestRunner.close(envelope_result(v, "GRAVITATIONAL_FORCE"), 6.674e-11, 1e-15))
+            lambda v: TestRunner.close(envelope_result(v, "GRAVITATIONAL_FORCE"), 6.67430e-11, 1e-15))
 
     r.check("dopplerEffect", "observer approaches",
             c("dopplerEffect", {"sourceFreq": "440", "soundSpeed": "340",
@@ -1386,7 +1468,7 @@ def test_physics(r: TestRunner) -> None:
             lambda v: TestRunner.close(envelope_result(v, "WAVE_LENGTH"), 300.0))
 
     r.check("planckEnergy", "f=1Hz", c("planckEnergy", {"frequency": "1"}),
-            lambda v: TestRunner.close(envelope_result(v, "PLANCK_ENERGY"), 6.626e-34, 1e-40))
+            lambda v: TestRunner.close(envelope_result(v, "PLANCK_ENERGY"), 6.62607015e-34, 1e-40))
 
     r.check("idealGasLaw", "solve V",
             c("idealGasLaw", {"pressure": "101325", "volume": "0",
@@ -1425,6 +1507,11 @@ def test_chemistry(r: TestRunner) -> None:
     r.check("molarMass", "H2O", c("molarMass", {"formula": "H2O"}),
             lambda v: envelope_ok(v, "MOLAR_MASS")
             and TestRunner.close(envelope_field(v, "MOLAR_MASS_G_MOL"), 18.015, 1e-2))
+    # Pre-2016 IUPAC provisional names (Uuo = Oganesson, Uut = Nihonium…)
+    # are aliases so legacy literature parses cleanly.
+    r.check("molarMass", "Uuo alias for Og", c("molarMass", {"formula": "Uuo"}),
+            lambda v: envelope_ok(v, "MOLAR_MASS")
+            and envelope_field(v, "MOLAR_MASS_G_MOL") == "294")
     r.check("ph", "[H+]=1e-7", c("ph", {"hConcentration": "0.0000001"}),
             lambda v: TestRunner.close(envelope_result(v, "PH"), 7.0, 1e-9))
     r.check("poh", "[OH-]=1e-3", c("poh", {"ohConcentration": "0.001"}),
@@ -1508,7 +1595,7 @@ def main() -> int:
             print(f"  {cat:22s} {n_ok}/{n_total}")
 
         print("=" * 60)
-        print(f"RESULTS: {passed}/{total} passed, {total - passed} failed (173 tools expected)")
+        print(f"RESULTS: {passed}/{total} passed, {total - passed} failed (174 tools expected)")
         if failures:
             print("FAILURES:")
             for _cat, tool, desc, _ok, detail in failures:
