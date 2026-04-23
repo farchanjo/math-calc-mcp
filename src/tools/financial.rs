@@ -189,7 +189,10 @@ pub fn compound_interest(
     if let Err(e) = require_non_negative(tool, &rate, "annual rate", "annualRate") {
         return e;
     }
-    if let Err(e) = require_positive(tool, &years_dec, "years", "years") {
+    // `years=0` is the identity case: A = P(1+r/n)^0 = P. Reject only
+    // negative years; callers running scenario tables use zero as the
+    // "now" baseline.
+    if let Err(e) = require_non_negative(tool, &years_dec, "years", "years") {
         return e;
     }
     if compounds_per_year <= 0 {
@@ -293,7 +296,9 @@ pub fn present_value(future_value: &str, annual_rate: &str, years: &str) -> Stri
     if let Err(e) = require_non_negative(tool, &rate, "annual rate", "annualRate") {
         return e;
     }
-    if let Err(e) = require_positive(tool, &years_dec, "years", "years") {
+    // `years=0` gives PV = FV / (1+r)^0 = FV — the trivial identity. Allow
+    // it so scenario tables using 0 as "today" don't fail.
+    if let Err(e) = require_non_negative(tool, &years_dec, "years", "years") {
         return e;
     }
 
@@ -613,6 +618,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn compound_interest_zero_years_is_identity() {
+        // A = P(1 + r/n)^0 = P. Scenario tables that include "t=0" as a
+        // baseline used to error out; now they just get the principal back.
+        assert_eq!(
+            compound_interest("1000", "5", "0", 12),
+            "COMPOUND_INTEREST: OK | RESULT: 1000"
+        );
+    }
+
+    #[test]
+    fn compound_interest_negative_years_still_rejected() {
+        let out = compound_interest("1000", "5", "-1", 12);
+        assert!(out.starts_with("COMPOUND_INTEREST: ERROR"));
+        assert!(out.contains("years must not be negative"));
+    }
+
     // ---- loan_payment ----
 
     #[test]
@@ -654,6 +676,16 @@ mod tests {
         assert_eq!(
             present_value("1000", "8", "5"),
             "PRESENT_VALUE: OK | RESULT: 680.58319703375316322003"
+        );
+    }
+
+    #[test]
+    fn present_value_zero_years_returns_future_value() {
+        // PV = FV / (1+r)^0 = FV. Callers modelling cash flows with a
+        // now-baseline should not need a special-case around `years=0`.
+        assert_eq!(
+            present_value("1000", "5", "0"),
+            "PRESENT_VALUE: OK | RESULT: 1000"
         );
     }
 
