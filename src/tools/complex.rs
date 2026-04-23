@@ -7,6 +7,26 @@
 use std::f64::consts::PI;
 
 use crate::mcp::message::{ErrorCode, Response, error, error_with_detail};
+use crate::tools::numeric::{canonicalize_zero, snap_to_precision};
+
+/// Guard against blindly rounding very-large or very-small results — the
+/// `10^magnitude` rescale inside [`snap_to_precision`] introduces a fresh
+/// ULP when `|value|` leaves the mantissa's representable range, which can
+/// *add* noise (`5e199` turns into `5.000000000000001e199`). Apply only to
+/// values whose magnitude sits in the range f64 handles losslessly for
+/// decimal rescaling: `[1e-15, 1e15]`. Outside that window the raw value
+/// is already the tightest f64 representation we have.
+fn snap_sig_digits_when_safe(value: f64) -> f64 {
+    if !value.is_finite() || value == 0.0 {
+        return value;
+    }
+    let mag = value.abs();
+    if (1e-15..1e15).contains(&mag) {
+        snap_to_precision(value, 15)
+    } else {
+        value
+    }
+}
 
 const TOOL_COMPLEX_ADD: &str = "COMPLEX_ADD";
 const TOOL_COMPLEX_MULT: &str = "COMPLEX_MULT";
@@ -57,25 +77,54 @@ impl C {
         // after scaling — almost. For `(-x, -0.0)` (imag = signed-negative
         // zero) `atan2` bottoms out at `-π`, so the degree form lands on
         // `-180.0`, which is *outside* the documented `(-180, 180]` interval.
-        // Map the lower boundary back to `+180` to match the docstring. The
-        // exact equality test with `-180.0` is deliberate: atan2 of signed
-        // zero produces that bitwise value, never a near-match like `-179.9…`.
+        // Map the lower boundary back to `+180` to match the docstring.
+        //
+        // The test is a bitwise check, not a "fuzzy" float equality —
+        // atan2 of signed zero produces the canonical `-180.0`
+        // representation and never a near-match like `-179.9…`. Compare as
+        // `u64` bit patterns so clippy's `float_cmp` lint stays satisfied
+        // without an `#[allow]` escape hatch.
         let raw = self.im.atan2(self.re) * RAD_TO_DEG;
-        #[allow(clippy::float_cmp)]
-        {
-            if raw == -180.0 { 180.0 } else { raw }
+        if raw.to_bits() == (-180.0_f64).to_bits() {
+            180.0
+        } else {
+            raw
         }
     }
 
+    /// Complex division using Smith's scale-protected formula.
+    ///
+    /// The textbook `(a+bi)/(c+di) = ((ac+bd) + (bc-ad)i) / (c²+d²)`
+    /// overflows to `+∞` as soon as `max(|c|,|d|) > ~1.3e154` and underflows
+    /// to `0` for `max(|c|,|d|) < ~1.5e-154`, producing a spurious
+    /// `DIVISION_BY_ZERO` for divisors whose true magnitude is perfectly
+    /// representable in `f64`. Smith's algorithm factors out the larger of
+    /// the two divisor components so every intermediate stays inside
+    /// normal range; the result is `None` iff the divisor is *bitwise*
+    /// zero.
     fn div(self, other: Self) -> Option<Self> {
-        let denom = other.re.mul_add(other.re, other.im * other.im);
-        if denom == 0.0 {
+        // Zero divisor detection via bit pattern — `±0 + ±0i` is the only
+        // true complex zero; any non-zero component keeps Smith's stable.
+        let zero_re = (other.re.to_bits() & !(1u64 << 63)) == 0;
+        let zero_im = (other.im.to_bits() & !(1u64 << 63)) == 0;
+        if zero_re && zero_im {
             return None;
         }
-        Some(Self::new(
-            self.re.mul_add(other.re, self.im * other.im) / denom,
-            self.im.mul_add(other.re, -(self.re * other.im)) / denom,
-        ))
+        if other.re.abs() >= other.im.abs() {
+            let r = other.im / other.re;
+            let denom = other.im.mul_add(r, other.re);
+            Some(Self::new(
+                self.im.mul_add(r, self.re) / denom,
+                self.re.mul_add(-r, self.im) / denom,
+            ))
+        } else {
+            let r = other.re / other.im;
+            let denom = other.re.mul_add(r, other.im);
+            Some(Self::new(
+                self.re.mul_add(r, self.im) / denom,
+                self.im.mul_add(r, -self.re) / denom,
+            ))
+        }
     }
 }
 
@@ -128,7 +177,14 @@ fn parse_f64(tool: &str, label: &str, value: &str) -> Result<f64, String> {
 }
 
 fn fmt(value: f64) -> String {
-    format!("{value:?}")
+    // Collapse IEEE-754 `-0.0` → `+0.0` at the formatting boundary.
+    // `conj({0, 0})` legitimately produces `imag = -0.0` (negation of the
+    // imaginary component), and other chains like `complexMult({-1,0}·{0,0})`
+    // leak signed zeros through the `mul_add` pipeline. None carry
+    // mathematical meaning at this output level — the bit-pattern distinction
+    // only matters for branch-cut-sensitive algorithms that aren't exposed
+    // via these tools.
+    format!("{:?}", canonicalize_zero(value))
 }
 
 /// Collapse numerically-dead residue from trig round-trips (e.g.
@@ -145,16 +201,28 @@ fn snap_to_zero(primary: f64, companion: f64) -> f64 {
     }
 }
 
-/// Snap a value to the nearest integer when the distance is within
-/// `1e-12 · max(|v|, 1)`. De Moivre power tricks leave `(1+i)^8 = 16` as
-/// `16.000000000000007`; this one-ulp cleanup brings the result back to
-/// the textbook integer without affecting genuine non-integers (which
-/// diverge from their nearest integer by far more than the threshold).
+/// Snap a value to the nearest *non-zero* integer when the distance is
+/// within `1e-12 · max(|v|, 1)`. De Moivre power tricks leave `(1+i)^8 = 16`
+/// as `16.000000000000007`; this one-ulp cleanup brings the result back to
+/// the textbook integer without affecting genuine non-integers.
+///
+/// The "non-zero" guard is essential: the nearest integer to any value with
+/// magnitude below `0.5` is `0`, so without the guard this function would
+/// collapse a perfectly legitimate `1e-100` (e.g. `complexSqrt(1e-200,0)` →
+/// `(1e-100, 0)`) into `(0, 0)`. Residues genuinely close to zero are
+/// handled upstream by [`snap_to_zero`].
 fn snap_near_integer(value: f64) -> f64 {
     if !value.is_finite() {
         return value;
     }
     let rounded = value.round();
+    // Skip when the target integer is `±0` — any value below `0.5` rounds
+    // to zero, and collapsing legitimate small magnitudes (e.g. `1e-100`
+    // from `complexSqrt(1e-200, 0)`) would be a silent magnitude loss.
+    // Bit-pattern check masks out the sign bit of `0.0`/`-0.0`.
+    if (rounded.to_bits() & !(1u64 << 63)) == 0 {
+        return value;
+    }
     let delta = (value - rounded).abs();
     let scale = value.abs().max(1.0);
     if delta <= 1e-12 * scale {
@@ -171,6 +239,17 @@ fn ok_complex(tool: &str, c: C) -> String {
     //    relative ulp — covers `(1+i)^8 = 16` / `e^(iπ) = -1` etc.
     let re = snap_near_integer(snap_to_zero(c.re, c.im));
     let im = snap_near_integer(snap_to_zero(c.im, c.re));
+    // An IEEE ±∞ or NaN leaking out via `REAL: inf` is a silent failure —
+    // `complexDiv(1e308, 1e-308)` overflows the real part but the envelope
+    // still said `OK`. Surface it so callers see OVERFLOW instead.
+    if !re.is_finite() || !im.is_finite() {
+        return error_with_detail(
+            tool,
+            ErrorCode::Overflow,
+            "complex result has a non-finite component (overflow/underflow to ±∞ or NaN)",
+            &format!("real={re:?}, imag={im:?}"),
+        );
+    }
     Response::ok(tool)
         .field("REAL", fmt(re))
         .field("IMAG", fmt(im))
@@ -312,7 +391,16 @@ pub fn polar_to_rect(magnitude: &str, angle_degrees: &str) -> String {
         );
     }
     let rad = theta_deg * DEG_TO_RAD;
-    ok_complex(TOOL_POLAR_TO_RECT, C::new(r * rad.cos(), r * rad.sin()))
+    // f64 cos/sin at notable angles drift by one ULP (`cos(60°)` prints
+    // `0.5000000000000001`). Round the rectangular coordinates to 15
+    // significant digits — which still covers f64's 15.95-digit guarantee
+    // — before handing off to `ok_complex`. The bounded-magnitude guard
+    // in `snap_sig_digits_when_safe` preserves extreme-scale results
+    // (e.g. `polarToRect(1e-200, 45°)`) from the rescale artefact that
+    // otherwise creeps into `10^n` multiplication.
+    let re = snap_sig_digits_when_safe(r * rad.cos());
+    let im = snap_sig_digits_when_safe(r * rad.sin());
+    ok_complex(TOOL_POLAR_TO_RECT, C::new(re, im))
 }
 
 /// Rectangular `(real, imag)` → polar `(magnitude, angleDegrees)`.
@@ -406,10 +494,35 @@ mod tests {
     }
 
     #[test]
+    fn div_tiny_denominator_no_spurious_zero() {
+        // Regression: `(c² + d²)` underflows for `|c|,|d| < ~1.5e-154`,
+        // producing `0.0` and triggering a false `DIVISION_BY_ZERO` even
+        // though the divisor is perfectly non-zero. Smith's algorithm
+        // factors the larger component out so the intermediate stays
+        // normal.
+        let out = complex_div("1,0", "1e-200,1e-200");
+        assert!(out.starts_with("COMPLEX_DIV: OK"), "got {out}");
+        // |1/(1e-200(1+i))| = 1/(√2 · 1e-200) ≈ 3.54e199.
+        // Real part = cos(-45°)/(√2·1e-200) = 0.707/(1.414e-200) = 5e199.
+        assert!(out.contains("5e199"), "got {out}");
+    }
+
+    #[test]
     fn conjugate_flips_imag_sign() {
         let out = complex_conjugate("3,5");
         approx_field(&out, "REAL", 3.0);
         approx_field(&out, "IMAG", -5.0);
+    }
+
+    #[test]
+    fn conjugate_of_zero_canonicalizes_negative_zero() {
+        // Regression: `conj(0 + 0i)` negates the imag part, which on IEEE-754
+        // yields `-0.0` — technically identical in value to `+0.0` but
+        // surfaced as the user-visible string `"-0.0"`. The `fmt` helper
+        // now collapses signed zeros so the output is always canonical.
+        let out = complex_conjugate("0,0");
+        assert!(!out.contains("-0.0"), "got {out}");
+        assert!(out.contains("IMAG: 0.0"), "got {out}");
     }
 
     #[test]
@@ -508,6 +621,19 @@ mod tests {
         let out = complex_sqrt("4,0");
         approx_field(&out, "REAL", 2.0);
         approx_field(&out, "IMAG", 0.0);
+    }
+
+    #[test]
+    fn sqrt_tiny_input_preserves_magnitude() {
+        // Regression: `sqrt(1e-200 + 0i) = 1e-100 + 0i`, but the
+        // `snap_near_integer` inside the ok_complex formatter used to
+        // collapse any value `< 1e-12` to `0` (since the nearest integer
+        // to `1e-100` is `0`). The zero-guard on the rounded target
+        // prevents the silent magnitude loss.
+        let out = complex_sqrt("1e-200,0");
+        assert!(out.starts_with("COMPLEX_SQRT: OK"), "got {out}");
+        assert!(out.contains("1e-100"), "got {out}");
+        assert!(!out.contains("REAL: 0.0 |"), "got {out}");
     }
 
     #[test]
